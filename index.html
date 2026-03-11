@@ -28,9 +28,8 @@ header{background:var(--ink);color:var(--paper);padding:0 40px;height:64px;displ
 main{max-width:1360px;margin:0 auto;padding:40px;}
 
 /* UPLOAD */
-.up-grid{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:20px;margin-bottom:24px;}
-@media(max-width:1100px){.up-grid{grid-template-columns:1fr 1fr;}}
-@media(max-width:600px){.up-grid{grid-template-columns:1fr;}}
+.up-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-bottom:24px;}
+@media(max-width:900px){.up-grid{grid-template-columns:1fr;}}
 .proc-status{margin-top:10px;font-size:11px;font-family:var(--mono);color:var(--muted);line-height:1.8;}
 .proc-status .pi{color:var(--orange);}
 .proc-status .pok{color:var(--green);}
@@ -163,28 +162,6 @@ tbody td{padding:11px 16px;font-family:var(--mono);font-size:12px;}
 </head>
 <body>
 
-<!-- MODAL CHAVE API -->
-<div class="ak-overlay" id="ak-overlay">
-  <div class="ak-box">
-    <div class="ak-logo">DIPLOMATA <em>PINA</em> · Conciliação</div>
-    <div class="ak-sub">Para leitura automática dos Relatórios POS, informe sua chave da API Anthropic.<br>A chave fica apenas na memória desta aba — nunca é salva ou enviada a terceiros.</div>
-    <div class="ak-label">Chave API Anthropic</div>
-    <div class="ak-input-wrap">
-      <input class="ak-input" id="ak-input" type="password" placeholder="sk-ant-api03-..." autocomplete="off" onkeydown="if(event.key==='Enter') confirmarChave()">
-      <button class="ak-btn" onclick="confirmarChave()">Confirmar →</button>
-    </div>
-    <div class="ak-note">
-      💡 Não tem chave? Acesse <a href="https://console.anthropic.com/settings/keys" target="_blank">console.anthropic.com</a> → API Keys → Create Key.<br>
-      Sem a chave, todas as funcionalidades funcionam normalmente — exceto a leitura automática dos relatórios POS (foto/PDF).
-      <br><br>
-      <span style="opacity:.7">Prefere usar sem a chave por enquanto?</span> <a href="#" onclick="fecharSemChave();return false;">Continuar sem leitura POS →</a>
-    </div>
-  </div>
-</div>
-
-<!-- BANNER STATUS API KEY -->
-<div class="ak-banner" id="ak-banner" style="display:none"></div>
-
 <header>
   <div class="logo"><div class="logo-dot"></div>DIPLOMATA <em>PINA</em> · Conciliação</div>
   <div class="hdr-r" id="hdr">Sistema de Conciliação de Cartões · v2.1</div>
@@ -236,21 +213,6 @@ tbody td{padding:11px 16px;font-family:var(--mono);font-size:12px;}
       </div>
       <div class="chip-list" id="lst-bank"></div>
       <div class="hint"><b>📌 Exportar OFX no Bradesco Net Empresa:</b><br>Extrato → Últimos Lançamentos → Exportar → Formato OFX</div>
-    </div>
-    <!-- FOTOS MAQUININHA -->
-    <div class="up-block" id="blk-pos">
-      <div class="up-hdr">
-        <div class="up-ico">📷</div>
-        <div><h3>Relatório POS <span style="font-weight:400;color:var(--muted)">foto/PDF</span></h3><p>1 arquivo por terminal por dia · EC2 ignorado</p></div>
-      </div>
-      <div class="dz" id="dz-pos" ondragover="dzO(event,'dz-pos')" ondragleave="dzL('dz-pos')" ondrop="dzD(event,'pos')">
-        <input type="file" id="inp-pos" accept="image/*,.pdf" multiple onchange="onF(event,'pos')">
-        <div class="dz-txt"><b>Arraste os arquivos aqui</b>Relatório Detalhado por Tipo de Pagamento<br><span style="font-size:10px">Leitura automática via IA · EC2 ignorado</span></div>
-        <div class="dz-btn">Selecionar Arquivos</div>
-      </div>
-      <div class="chip-list" id="lst-pos"></div>
-      <div class="proc-status" id="proc-status" style="display:none"></div>
-      <div class="hint"><b>📌 No portal Cielo:</b><br>POS → Relatórios → Detalhado por Tipo de Pagamento → Imprimir/Salvar</div>
     </div>
   </div>
 
@@ -685,6 +647,7 @@ Regras:
     }
 
     var data = await resp.json();
+    console.log('API response:', JSON.stringify(data).substring(0, 500));
 
     // Verificar erro na resposta da API
     if (data.error) {
