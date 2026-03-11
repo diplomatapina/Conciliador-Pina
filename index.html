@@ -641,12 +641,10 @@ Regras:
 
   try {
     var mediaType = mime;
-    // Claude Vision aceita image/jpeg, image/png, image/gif, image/webp
     if (mime === 'application/pdf') {
-      // Para PDF, usa document type
       var body = {
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
+        max_tokens: 2048,
         messages: [{
           role: 'user',
           content: [
@@ -658,7 +656,7 @@ Regras:
     } else {
       var body = {
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
+        max_tokens: 2048,
         messages: [{
           role: 'user',
           content: [
@@ -680,10 +678,28 @@ Regras:
       body: JSON.stringify(body)
     });
 
+    // Verificar erro HTTP antes de parsear
+    if (!resp.ok) {
+      var errBody = await resp.text();
+      throw new Error('API retornou ' + resp.status + ': ' + errBody.substring(0,200));
+    }
+
     var data = await resp.json();
+
+    // Verificar erro na resposta da API
+    if (data.error) {
+      throw new Error(data.error.message || JSON.stringify(data.error));
+    }
+
     var txt = (data.content || []).filter(function(b){ return b.type==='text'; }).map(function(b){ return b.text; }).join('');
-    // Limpar markdown fences se houver
     txt = txt.replace(/```json|```/g,'').trim();
+
+    // Se txt vazio, provavelmente stop_reason foi max_tokens
+    if (!txt) {
+      var reason = data.stop_reason || 'desconhecido';
+      throw new Error('Resposta vazia da API (stop_reason: ' + reason + ')');
+    }
+
     var parsed = JSON.parse(txt);
 
     var pos  = (parsed.pos  || '').replace(/\D/g,'');
