@@ -288,8 +288,10 @@ var TAXAS = {
   'ELO Debito':         {taxa:0.0110, tipo:'debito',        prazo:1,  regra:'corridos'},
   'Amex Credito':       {taxa:0.0268, tipo:'credito_vista', prazo:15, regra:'corridos'},
   'Hipercard':          {taxa:0.0268, tipo:'credito_vista', prazo:15, regra:'corridos'},
-  'Alelo Refeicao':     {taxa:0.0360, tipo:'voucher',       prazo:15, regra:'corridos'},
-  'Alelo Alimentação':  {taxa:0.0360, tipo:'voucher',       prazo:15, regra:'corridos'},
+  'Alelo Refeicao':     {taxa:0.0360, tipo:'voucher', prazo:15, regra:'corridos',
+    historico: [{ate: '2026-02-06', taxa:0.0705, prazo:30}]},
+  'Alelo Alimentação':  {taxa:0.0360, tipo:'voucher', prazo:15, regra:'corridos',
+    historico: [{ate: '2026-02-06', taxa:0.0705, prazo:30}]},
   'Sodexo Refeicao':    {taxa:0.0580, tipo:'voucher_sodexo', tarifa_dep:11.30, prazo:29, regra:'corte_seg'},
   'Sodexo Alimentacao': {taxa:0.0580, tipo:'voucher_sodexo', tarifa_dep:11.30, prazo:29, regra:'corte_seg'},
   'VR Beneficios':      {taxa:0.0630, tipo:'voucher_vr',    tarifa_dep:6.51,  prazo:28, regra:'corte_seg'},
@@ -449,8 +451,23 @@ function adicionarChip(listId, nome, info) {
 }
 
 
-// ══════════════════════════════════════════════════════════
-// PARSERS
+function getTaxa(produto, dataVenda) {
+  var cfg = TAXAS[produto];
+  if (!cfg) return {taxa:0, prazo:0, regra:'corridos'};
+  // Verificar histórico de taxas por data
+  if (cfg.historico && dataVenda) {
+    var ds = dataVenda.toISOString().split('T')[0];
+    for (var i = 0; i < cfg.historico.length; i++) {
+      var h = cfg.historico[i];
+      if (ds <= h.ate) {
+        return {taxa: h.taxa, prazo: h.prazo, regra: cfg.regra, tipo: cfg.tipo, tarifa_dep: cfg.tarifa_dep};
+      }
+    }
+  }
+  return cfg;
+}
+
+
 // ══════════════════════════════════════════════════════════
 function parseTEF(raw) {
   var lines = raw.split('\n');
@@ -694,7 +711,7 @@ function proximaTerca(d) {
   return x;
 }
 function calcDeposito(date, produto) {
-  var c = TAXAS[produto];
+  var c = getTaxa(produto, date);
   if (!c) return null;
   if (c.regra === 'mesmo_dia') return new Date(date);
   if (c.regra === 'corridos')  return addDiasCorridos(date, c.prazo);
@@ -735,7 +752,7 @@ function executar() {
     var vm = {};
     for (var i = 0; i < tefMais.length; i++) {
       var tx = tefMais[i];
-      var cfg = TAXAS[tx.produto] || { taxa: 0, tipo: 'outros' };
+      var cfg = getTaxa(tx.produto, tx.date) || { taxa: 0, tipo: 'outros' };
       if (!vm[tx.produto]) vm[tx.produto] = { produto: tx.produto, count: 0, bruto: 0, liq: 0, tipo: cfg.tipo };
       vm[tx.produto].count++;
       vm[tx.produto].bruto += tx.valor;
@@ -757,7 +774,7 @@ function executar() {
 
       for (var i = 0; i < cieloFiltrada.length; i++) {
         var cx = cieloFiltrada[i];
-        var cfg = TAXAS[cx.produto] || { taxa: 0, tipo: 'outros', tarifa_dep: 0 };
+        var cfg = getTaxa(cx.produto, cx.date_venda) || { taxa: 0, tipo: 'outros', tarifa_dep: 0 };
         var depDate = proximoDiaUtil(cx.date_dep);
         var key = cx.produto + '_' + depDate.toISOString().split('T')[0];
         if (!am[key]) am[key] = {
@@ -779,7 +796,7 @@ function executar() {
       for (var i = 0; i < tefMais.length; i++) {
         var tx = tefMais[i];
         if (VOUCHER_LOCAIS.indexOf(tx.produto) < 0) continue;
-        var cfg = TAXAS[tx.produto] || { taxa: 0, tipo: 'voucher', tarifa_dep: 0 };
+        var cfg = getTaxa(tx.produto, tx.date) || { taxa: 0, tipo: 'voucher', tarifa_dep: 0 };
         var liq = tx.valor * (1 - cfg.taxa);
         var dd = calcDeposito(tx.date, tx.produto);
         if (!dd) continue;
@@ -796,7 +813,7 @@ function executar() {
       // Sem Cielo: tudo calculado pelo TEF+POS
       for (var i = 0; i < tefMais.length; i++) {
         var tx = tefMais[i];
-        var cfg = TAXAS[tx.produto] || { taxa: 0, tipo: 'outros', tarifa_dep: 0 };
+        var cfg = getTaxa(tx.produto, tx.date) || { taxa: 0, tipo: 'outros', tarifa_dep: 0 };
         var liq = tx.valor * (1 - cfg.taxa);
         var dd = calcDeposito(tx.date, tx.produto);
         if (!dd) continue;
@@ -1040,7 +1057,7 @@ function executar() {
         // Detectar se a venda que gerou este depósito provavelmente ocorreu antes do período importado
         var isPeriodoAnterior = false;
         if (tefDataMin) {
-          var cfg2 = TAXAS[item.produto] || {};
+          var cfg2 = getTaxa(item.produto, item.dep_date) || {};
           var prazo2 = cfg2.prazo || 15;
           var vendaEstimada = new Date(item.dep_date);
           vendaEstimada.setDate(vendaEstimada.getDate() - prazo2);
@@ -1157,7 +1174,7 @@ function desenharVendas() {
   document.getElementById('c0').textContent = items.length;
   var h = '<table><thead><tr><th>Bandeira</th><th>Tipo</th><th class="tc">Qtde</th><th class="tr">Bruto</th><th class="tr">Taxa MDR</th><th class="tr">Desconto</th><th class="tr">Líquido</th><th>Participação</th></tr></thead><tbody>';
   items.forEach(function(v) {
-    var cfg = TAXAS[v.produto] || {};
+    var cfg = getTaxa(v.produto, null) || {};
     var disc = v.bruto - v.liq;
     var pct  = totB ? (v.bruto / totB * 100).toFixed(1) : 0;
     var bw   = maxB ? Math.round(v.bruto / maxB * 100) : 0;
@@ -1306,7 +1323,7 @@ function desenharTaxas() {
   var h = '<table><thead><tr><th>Bandeira</th><th>Taxa Contratada</th><th class="tr">Bruto Total</th><th class="tr">Desc. Esperado</th><th class="tr">Desc. Calculado</th><th class="tr">Diferença</th><th>Avaliação</th></tr></thead><tbody>';
   Object.entries(R.vm).forEach(function(kv) {
     var p = kv[0], v = kv[1];
-    var cfg = TAXAS[p] || {};
+    var cfg = getTaxa(p, null) || {};
     var te = cfg.taxa || 0;
     var de = v.bruto * te;
     var dr = v.bruto - v.liq;
