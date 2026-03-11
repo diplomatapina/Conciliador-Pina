@@ -432,26 +432,6 @@ function adicionarChip(listId, nome, info) {
   document.getElementById(listId).appendChild(el);
 }
 
-// ══════════════════════════════════════════════════════════
-// LEITURA DE FOTOS DE MAQUININHA VIA CLAUDE VISION API
-// EC1 (conta Bradesco 369878-5): POS 00402832, 01175031,
-//                                     00475505, 00475509(*), 00402831
-// (*) 00475509 = EC2 neste relatório de exemplo — ignorar
-// ECs EC1: 1047624092
-// ECs EC2: 1081743112
-// ══════════════════════════════════════════════════════════
-
-
-
-  return raw;
-}
-
-  return 'outros';
-}
-
-// Ajusta produto pelo tipo quando necessário (ex: Visa + débito → Visa Electron)
-  return produto;
-}
 
 
 function getTaxa(produto, dataVenda) {
