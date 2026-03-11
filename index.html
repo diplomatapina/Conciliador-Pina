@@ -528,15 +528,16 @@ function parseCielo(raw) {
       if (b === 'Mastercard') return 'Multibenefícios Master';
       if (b === 'Elo')        return 'Multibenefícios Elo';
     }
+    // Pré-pago: agrupa com produto normal (banco deposita junto, mesmo lançamento)
     if (f === 'Crédito pré-pago') {
-      if (b === 'Visa')       return 'Visa Pré Pago';
-      if (b === 'Mastercard') return 'Master Pré Pago';
-      if (b === 'Elo')        return 'Elo Pré Pago';
+      if (b === 'Visa')       return 'Visa';
+      if (b === 'Mastercard') return 'Mastercard';
+      if (b === 'Elo')        return 'ELO Credito';
     }
     if (f === 'Débito pré-pago') {
-      if (b === 'Visa')       return 'Visa Débito Pré Pago';
-      if (b === 'Mastercard') return 'Master Débito Pré Pago';
-      if (b === 'Elo')        return 'Elo Débito Pré Pago';
+      if (b === 'Visa')       return 'Visa Electron';
+      if (b === 'Mastercard') return 'Maestro';
+      if (b === 'Elo')        return 'ELO Debito';
     }
     if (f === 'Crédito conversor de moedas') {
       if (b === 'Visa')       return 'Visa Exterior';
