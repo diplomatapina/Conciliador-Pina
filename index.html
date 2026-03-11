@@ -30,10 +30,6 @@ main{max-width:1360px;margin:0 auto;padding:40px;}
 /* UPLOAD */
 .up-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-bottom:24px;}
 @media(max-width:900px){.up-grid{grid-template-columns:1fr;}}
-.proc-status{margin-top:10px;font-size:11px;font-family:var(--mono);color:var(--muted);line-height:1.8;}
-.proc-status .pi{color:var(--orange);}
-.proc-status .pok{color:var(--green);}
-.proc-status .perr{color:var(--red);}
 .chip.chip-proc{background:var(--orange-bg);border-color:rgba(192,90,16,.2);}
 .chip.chip-proc .chip-name{color:var(--orange);}
 .chip.chip-ec2{background:var(--paper2);border-color:var(--border);opacity:.6;}
@@ -46,10 +42,9 @@ main{max-width:1360px;margin:0 auto;padding:40px;}
 .up-block p{font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:2px;}
 .dz{border:1.5px dashed var(--border);border-radius:10px;padding:20px;text-align:center;cursor:pointer;transition:all .2s;position:relative;background:var(--paper);}
 .dz:hover,.dz.over{border-color:var(--gold);background:#fffbf0;}
-.dz input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
 .dz-txt{font-size:12px;color:var(--muted);font-family:var(--mono);}
 .dz-txt b{color:var(--ink);display:block;font-size:13px;margin-bottom:4px;}
-.dz-btn{display:inline-block;margin-top:10px;padding:6px 16px;background:var(--ink);color:var(--paper);border-radius:6px;font-size:12px;font-weight:700;}
+.dz-btn{display:inline-block;margin-top:10px;padding:6px 16px;background:var(--ink);color:var(--paper);border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;user-select:none;}
 .chip-list{margin-top:12px;display:flex;flex-direction:column;gap:6px;max-height:150px;overflow-y:auto;}
 .chip{display:flex;align-items:center;gap:10px;background:var(--green-bg);border:1px solid rgba(26,122,74,.2);border-radius:8px;padding:8px 12px;font-size:12px;font-family:var(--mono);}
 .chip-name{color:var(--green);font-weight:600;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -135,29 +130,6 @@ tbody td{padding:11px 16px;font-family:var(--mono);font-size:12px;}
 ::-webkit-scrollbar{width:6px;height:6px;}
 ::-webkit-scrollbar-track{background:var(--paper2);}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px;}
-
-/* API KEY MODAL */
-.ak-overlay{position:fixed;inset:0;background:rgba(14,17,23,.7);z-index:1000;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);}
-.ak-box{background:white;border-radius:20px;padding:40px;width:100%;max-width:480px;box-shadow:0 24px 80px rgba(14,17,23,.25);}
-.ak-logo{font-family:var(--sans);font-size:20px;font-weight:900;margin-bottom:6px;}
-.ak-logo em{color:var(--gold-l);font-style:normal;}
-.ak-sub{font-size:12px;font-family:var(--mono);color:var(--muted);margin-bottom:28px;line-height:1.6;}
-.ak-label{font-size:11px;font-family:var(--mono);text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:8px;}
-.ak-input-wrap{display:flex;gap:10px;margin-bottom:16px;}
-.ak-input{flex:1;border:1.5px solid var(--border);border-radius:10px;padding:12px 16px;font-family:var(--mono);font-size:13px;outline:none;background:var(--paper);transition:border-color .15s;}
-.ak-input:focus{border-color:var(--gold);}
-.ak-btn{background:var(--ink);color:var(--paper);border:none;border-radius:10px;padding:12px 20px;font-family:var(--sans);font-size:13px;font-weight:800;cursor:pointer;white-space:nowrap;transition:background .15s;}
-.ak-btn:hover{background:#1e2530;}
-.ak-note{font-size:11px;font-family:var(--mono);color:var(--muted);line-height:1.7;padding:12px;background:var(--paper2);border-radius:8px;}
-.ak-note a{color:var(--blue);text-decoration:none;}
-.ak-note a:hover{text-decoration:underline;}
-
-/* API KEY BANNER (quando já configurada) */
-.ak-banner{display:flex;align-items:center;gap:10px;padding:8px 16px;background:var(--green-bg);border-bottom:1px solid rgba(26,122,74,.15);font-size:11px;font-family:var(--mono);color:var(--green);}
-.ak-banner button{margin-left:auto;background:none;border:1px solid rgba(26,122,74,.3);border-radius:6px;padding:3px 10px;font-size:10px;font-family:var(--mono);color:var(--green);cursor:pointer;}
-.ak-banner button:hover{background:rgba(26,122,74,.1);}
-.ak-banner.warn{background:var(--orange-bg);border-color:rgba(192,90,16,.15);color:var(--orange);}
-.ak-banner.warn button{border-color:rgba(192,90,16,.3);color:var(--orange);}
 </style>
 </head>
 <body>
@@ -174,10 +146,14 @@ tbody td{padding:11px 16px;font-family:var(--mono);font-size:12px;}
         <div class="up-ico">📋</div>
         <div><h3>TEF <span style="font-weight:400;color:var(--muted)">CSV do sistema</span></h3><p>Múltiplos arquivos · dedup automático por NSU</p></div>
       </div>
-      <div class="dz" id="dz-tef" ondragover="dzO(event,'dz-tef')" ondragleave="dzL('dz-tef')" ondrop="dzD(event,'tef')">
-        <input type="file" id="inp-tef" accept=".csv,.txt" multiple onchange="onF(event,'tef')">
+      <div class="dz" id="dz-tef"
+        ondragenter="event.preventDefault();this.classList.add('over')"
+        ondragover="event.preventDefault();this.classList.add('over')"
+        ondragleave="this.classList.remove('over')"
+        ondrop="this.classList.remove('over');event.preventDefault();onF2(event.dataTransfer.files,'tef')">
+        <input type="file" id="inp-tef" accept=".csv,.txt" multiple style="display:none" onchange="onF2(this.files,'tef')">
         <div class="dz-txt"><b>Arraste os CSVs aqui</b>Múltiplos arquivos de períodos diferentes<br><span style="font-size:10px">Duplicatas removidas automaticamente por NSU</span></div>
-        <div class="dz-btn">Selecionar Arquivos</div>
+        <div class="dz-btn" onclick="event.stopPropagation();document.getElementById('inp-tef').click()">Selecionar Arquivos</div>
       </div>
       <div class="chip-list" id="lst-tef"></div>
     </div>
@@ -187,10 +163,14 @@ tbody td{padding:11px 16px;font-family:var(--mono);font-size:12px;}
         <div class="up-ico">🔄</div>
         <div><h3>Relatório Cielo</h3><p>CSV Detalhado de Vendas · vários períodos</p></div>
       </div>
-      <div class="dz" id="dz-cielo" ondragover="dzO(event,'dz-cielo')" ondragleave="dzL('dz-cielo')" ondrop="dzD(event,'cielo')">
-        <input type="file" id="inp-cielo" accept=".csv,.txt" multiple onchange="onF(event,'cielo')">
+      <div class="dz" id="dz-cielo"
+        ondragenter="event.preventDefault();this.classList.add('over')"
+        ondragover="event.preventDefault();this.classList.add('over')"
+        ondragleave="this.classList.remove('over')"
+        ondrop="this.classList.remove('over');event.preventDefault();onF2(event.dataTransfer.files,'cielo')">
+        <input type="file" id="inp-cielo" accept=".csv,.txt" multiple style="display:none" onchange="onF2(this.files,'cielo')">
         <div class="dz-txt"><b>Arraste os CSVs aqui</b>Portal Cielo → Relatórios → Detalhado de Vendas<br><span style="font-size:10px">Se exportado por Raiz CNPJ, selecione o EC abaixo</span></div>
-        <div class="dz-btn">Selecionar Arquivos</div>
+        <div class="dz-btn" onclick="event.stopPropagation();document.getElementById('inp-cielo').click()">Selecionar Arquivos</div>
       </div>
       <div class="chip-list" id="lst-cielo"></div>
       <div class="hint" id="hint-ec" style="display:none">
@@ -206,10 +186,14 @@ tbody td{padding:11px 16px;font-family:var(--mono);font-size:12px;}
         <div class="up-ico">🏦</div>
         <div><h3>Extratos Bancários</h3><p>OFX ou TXT do Bradesco · vários meses</p></div>
       </div>
-      <div class="dz" id="dz-bank" ondragover="dzO(event,'dz-bank')" ondragleave="dzL('dz-bank')" ondrop="dzD(event,'bank')">
-        <input type="file" id="inp-bank" accept=".ofx,.csv,.txt" multiple onchange="onF(event,'bank')">
+      <div class="dz" id="dz-bank"
+        ondragenter="event.preventDefault();this.classList.add('over')"
+        ondragover="event.preventDefault();this.classList.add('over')"
+        ondragleave="this.classList.remove('over')"
+        ondrop="this.classList.remove('over');event.preventDefault();onF2(event.dataTransfer.files,'bank')">
+        <input type="file" id="inp-bank" accept=".ofx,.csv,.txt" multiple style="display:none" onchange="onF2(this.files,'bank')">
         <div class="dz-txt"><b>Arraste os extratos aqui</b>OFX recomendado · vários meses de uma vez</div>
-        <div class="dz-btn">Selecionar Arquivos</div>
+        <div class="dz-btn" onclick="event.stopPropagation();document.getElementById('inp-bank').click()">Selecionar Arquivos</div>
       </div>
       <div class="chip-list" id="lst-bank"></div>
       <div class="hint"><b>📌 Exportar OFX no Bradesco Net Empresa:</b><br>Extrato → Últimos Lançamentos → Exportar → Formato OFX</div>
@@ -292,36 +276,6 @@ tbody td{padding:11px 16px;font-family:var(--mono);font-size:12px;}
 
 <script>
 // ══════════════════════════════════════════════════════════
-// GERENCIAMENTO DA CHAVE API
-// ══════════════════════════════════════════════════════════
-var API_KEY = '';
-
-function confirmarChave() {
-  var val = document.getElementById('ak-input').value.trim();
-  if (!val.startsWith('sk-ant-')) {
-    document.getElementById('ak-input').style.borderColor = 'var(--red)';
-    document.getElementById('ak-input').placeholder = 'Chave inválida — deve começar com sk-ant-...';
-    return;
-  }
-  API_KEY = val;
-  document.getElementById('ak-overlay').style.display = 'none';
-  mostrarBanner('✓ Chave API configurada · Leitura POS ativada', false);
-}
-
-function fecharSemChave() {
-  document.getElementById('ak-overlay').style.display = 'none';
-  mostrarBanner('⚠ Sem chave API · Leitura automática de Relatório POS desativada', true);
-}
-
-function mostrarBanner(msg, warn) {
-  var el = document.getElementById('ak-banner');
-  el.className = 'ak-banner' + (warn ? ' warn' : '');
-  el.innerHTML = '<span>' + msg + '</span>' +
-    '<button onclick="document.getElementById(\'ak-overlay\').style.display=\'flex\';document.getElementById(\'ak-input\').value=\'\'">Alterar chave</button>';
-  el.style.display = 'flex';
-}
-
-// ══════════════════════════════════════════════════════════
 // TABELA DE TAXAS E REGRAS
 // ══════════════════════════════════════════════════════════
 var TAXAS = {
@@ -344,7 +298,6 @@ var TAXAS = {
   'Ticket Alimentacao': {taxa:0.0600, tipo:'voucher_ticket', prazo:27, regra:'corte_ter'},
   'Ticket Flex':        {taxa:0.0580, tipo:'voucher_ticket', prazo:27, regra:'corte_ter'},
   'Pix':                {taxa:0.0000, tipo:'pix',            prazo:0,  regra:'mesmo_dia'},
-  'Pix POS':            {taxa:0.0080, tipo:'pix',            prazo:0,  regra:'mesmo_dia'}  // PIX via maquininha Cielo (taxa confirmada nos dados)
 };
 
 var LBL = {
@@ -356,7 +309,7 @@ var LBL = {
   'Sodexo Refeicao':'Pluxee Refeição','Sodexo Alimentacao':'Pluxee Alimentação',
   'VR Beneficios':'VR Benefícios','VR Refeicao':'VR Refeição',
   'Ticket Restaurante':'Ticket Restaurante','Ticket Alimentacao':'Ticket Alimentação',
-  'Ticket Flex':'Ticket Flex','Pix':'PIX','Pix POS':'PIX (maquininha)'
+  'Ticket Flex':'Ticket Flex','Pix':'PIX'
 };
 
 // ══════════════════════════════════════════════════════════
@@ -381,12 +334,9 @@ var APP = {
   tefTxs: [],
   cieloTxs: [],
   bankTxs: [],
-  posTxs: [],      // transações lidas das fotos de maquininha (EC1 apenas)
   tefCount: 0,
   cieloCount: 0,
   bankCount: 0,
-  posCount: 0,
-  posProcessando: 0,
   ecFiltro: '',
   ecList: [],
   resultado: null
@@ -398,32 +348,24 @@ HOJE.setHours(0,0,0,0);
 // ══════════════════════════════════════════════════════════
 // DRAG & DROP
 // ══════════════════════════════════════════════════════════
-function dzO(e, id) { e.preventDefault(); document.getElementById(id).classList.add('over'); }
+function dzO(e, id) { e.preventDefault(); e.stopPropagation(); document.getElementById(id).classList.add('over'); }
 function dzL(id)    { document.getElementById(id).classList.remove('over'); }
 function dzD(e, tipo) {
   e.preventDefault();
+  e.stopPropagation();
   dzL('dz-' + tipo);
-  carregarArquivos(Array.from(e.dataTransfer.files), tipo);
+  var files = e.dataTransfer ? e.dataTransfer.files : null;
+  if (files && files.length > 0) carregarArquivos(Array.from(files), tipo);
 }
 function onF(e, tipo) {
   carregarArquivos(Array.from(e.target.files), tipo);
 }
+function onF2(files, tipo) {
+  if (files && files.length > 0) carregarArquivos(Array.from(files), tipo);
+}
 
 function carregarArquivos(files, tipo) {
   files.forEach(function(f) {
-    if (tipo === 'pos') {
-      // Fotos de maquininha: lê como base64 e processa via Claude Vision
-      var rd = new FileReader();
-      rd.onload = function(ev) {
-        var b64 = ev.target.result.split(',')[1];
-        var mime = f.type || 'image/jpeg';
-        processarFotoPos(f.name, b64, mime);
-      };
-      rd.readAsDataURL(f);
-      // Chip provisório "processando"
-      adicionarChipProc('lst-pos', f.name, '⏳ lendo...');
-      return;
-    }
     var rd = new FileReader();
     rd.onload = function(ev) {
       var txt = ev.target.result;
@@ -471,7 +413,7 @@ function carregarArquivos(files, tipo) {
         adicionarChip('lst-bank', f.name, (rows ? rows.length : 0) + ' lançamentos');
         document.getElementById('blk-bank').classList.add('ok');
       }
-      document.getElementById('btn-run').disabled = (APP.tefTxs.length === 0 && APP.posTxs.length === 0);
+      document.getElementById('btn-run').disabled = (APP.tefTxs.length === 0);
     };
     rd.readAsText(f, 'ISO-8859-1');
   });
@@ -485,28 +427,6 @@ function adicionarChip(listId, nome, info) {
   document.getElementById(listId).appendChild(el);
 }
 
-function adicionarChipProc(listId, nome, info) {
-  var id = 'chip-pos-' + nome.replace(/[^a-z0-9]/gi,'_');
-  var el = document.createElement('div');
-  el.className = 'chip chip-proc';
-  el.id = id;
-  el.innerHTML = '<span style="font-size:14px">⏳</span>' +
-    '<div><div class="chip-name">' + nome + '</div><div class="chip-info" id="info-'+id+'">' + info + '</div></div>';
-  document.getElementById(listId).appendChild(el);
-  return id;
-}
-
-function atualizarChipPos(nome, info, tipo) {
-  var id = 'chip-pos-' + nome.replace(/[^a-z0-9]/gi,'_');
-  var el = document.getElementById(id);
-  if (!el) return;
-  if (tipo === 'ok')  { el.className='chip'; el.querySelector('span').textContent='✓'; }
-  if (tipo === 'ec2') { el.className='chip chip-ec2'; el.querySelector('span').textContent='⛔'; }
-  if (tipo === 'err') { el.className='chip'; el.querySelector('span').style.color='var(--red)'; el.querySelector('span').textContent='✗'; }
-  var inf = document.getElementById('info-'+id);
-  if (inf) inf.textContent = info;
-}
-
 // ══════════════════════════════════════════════════════════
 // LEITURA DE FOTOS DE MAQUININHA VIA CLAUDE VISION API
 // EC1 (conta Bradesco 369878-5): POS 00402832, 01175031,
@@ -515,221 +435,19 @@ function atualizarChipPos(nome, info, tipo) {
 // ECs EC1: 1047624092
 // ECs EC2: 1081743112
 // ══════════════════════════════════════════════════════════
-var EC1_POS = ['00402832','01175031','00475505','00402831','41006126'];
-var EC2_POS = ['00475509','00151461','01243975','41005649'];
 
-var MAPA_BANDEIRA_POS = {
-  'MASTERCARD': 'Mastercard', 'MASTER': 'Mastercard',
-  'VISA': 'Visa',
-  'ELO': 'ELO Credito',
-  'AMEX': 'Amex Credito', 'AMERICAN EXPRESS': 'Amex Credito',
-  'HIPERCARD': 'Hipercard',
-  'ALELO': 'Alelo Refeicao',
-  'SODEXO': 'Sodexo Refeicao', 'PLUXEE': 'Sodexo Refeicao',
-  'VR': 'VR Beneficios',
-  'TICKET': 'Ticket Restaurante',
-  'PIX': 'Pix POS'   // PIX via maquininha tem taxa 0,80% — distinto do PIX TEF (0%)
-};
 
-var MAPA_TIPO_POS = {
-  'CREDITO A VISTA': 'credito_vista', 'CRÉDITO À VISTA': 'credito_vista',
-  'CREDITO': 'credito_vista', 'CRÉDITO': 'credito_vista',
-  'DEBITO': 'debito', 'DÉBITO': 'debito',
-  'DEBITO A VISTA': 'debito', 'DÉBITO À VISTA': 'debito',
-  'PIX': 'pix',
-  'VOUCHER': 'voucher'
-};
 
-function mapBandeiraPOS(raw) {
-  var u = (raw||'').toUpperCase().trim();
-  for (var k in MAPA_BANDEIRA_POS) {
-    if (u.indexOf(k) >= 0) return MAPA_BANDEIRA_POS[k];
-  }
   return raw;
 }
 
-function mapTipoPOS(raw) {
-  var u = (raw||'').toUpperCase().trim();
-  for (var k in MAPA_TIPO_POS) {
-    if (u.indexOf(k) >= 0) return MAPA_TIPO_POS[k];
-  }
   return 'outros';
 }
 
 // Ajusta produto pelo tipo quando necessário (ex: Visa + débito → Visa Electron)
-function ajustarProdutoPorTipo(produto, tipo) {
-  if (tipo === 'debito') {
-    if (produto === 'Visa')        return 'Visa Electron';
-    if (produto === 'Mastercard')  return 'Maestro';
-    if (produto === 'ELO Credito') return 'ELO Debito';
-  }
   return produto;
 }
 
-async function processarFotoPos(nome, b64, mime) {
-  // Verificar se tem chave configurada
-  if (!API_KEY) {
-    atualizarChipPos(nome, '✗ Sem chave API — clique em "Alterar chave" no topo', 'err');
-    mostrarBanner('⚠ Sem chave API · Leitura automática de Relatório POS desativada', true);
-    return;
-  }
-
-  APP.posProcessando++;
-  document.getElementById('proc-status').style.display = 'block';
-  atualizarStatus();
-
-  var prompt = `Você é um extrator de dados de relatórios de maquininha Cielo.
-Extraia as seguintes informações deste relatório e responda SOMENTE com JSON válido, sem texto extra:
-
-{
-  "ec": "número do EC (campo 'EC:' no cabeçalho, só os dígitos)",
-  "pos": "número do POS (campo 'POS:' no cabeçalho, só os dígitos)",
-  "data_venda": "dd/mm/aaaa",
-  "transacoes": [
-    {
-      "bandeira": "MASTERCARD|VISA|ELO|AMEX|HIPERCARD|ALELO|SODEXO|VR|TICKET|PIX",
-      "tipo": "CREDITO A VISTA|DEBITO A VISTA|PIX|VOUCHER",
-      "valor": 0.00
-    }
-  ],
-  "total": 0.00
-}
-
-Regras:
-- Inclua APENAS transações com status APROVADA
-- Ignore linhas de RESUMO ou TOTAL (elas são confirmatórias, não use para duplicar)
-- Valores em formato numérico (ex: 20.55, não "20,55")
-- Se não conseguir ler algum campo, use null`;
-
-  try {
-    var mediaType = mime;
-    if (mime === 'application/pdf') {
-      var body = {
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2048,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } },
-            { type: 'text', text: prompt }
-          ]
-        }]
-      };
-    } else {
-      var body = {
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2048,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: mime, data: b64 } },
-            { type: 'text', text: prompt }
-          ]
-        }]
-      };
-    }
-
-    var resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': API_KEY,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
-      },
-      body: JSON.stringify(body)
-    });
-
-    // Verificar erro HTTP antes de parsear
-    if (!resp.ok) {
-      var errBody = await resp.text();
-      throw new Error('API retornou ' + resp.status + ': ' + errBody.substring(0,200));
-    }
-
-    var data = await resp.json();
-    console.log('API response:', JSON.stringify(data).substring(0, 500));
-
-    // Verificar erro na resposta da API
-    if (data.error) {
-      throw new Error(data.error.message || JSON.stringify(data.error));
-    }
-
-    var txt = (data.content || []).filter(function(b){ return b.type==='text'; }).map(function(b){ return b.text; }).join('');
-    txt = txt.replace(/```json|```/g,'').trim();
-
-    // Se txt vazio, provavelmente stop_reason foi max_tokens
-    if (!txt) {
-      var reason = data.stop_reason || 'desconhecido';
-      throw new Error('Resposta vazia da API (stop_reason: ' + reason + ')');
-    }
-
-    var parsed = JSON.parse(txt);
-
-    var pos  = (parsed.pos  || '').replace(/\D/g,'');
-    var ec   = (parsed.ec   || '').replace(/\D/g,'');
-    var data_venda = parsed.data_venda || '';
-    var txs  = parsed.transacoes || [];
-
-    // Verificar se é EC2 → ignorar
-    var isEC2 = EC2_POS.indexOf(pos) >= 0;
-    if (isEC2) {
-      APP.posProcessando--;
-      atualizarChipPos(nome, '⛔ EC2 ignorado (POS ' + pos + ')', 'ec2');
-      atualizarStatus();
-      return;
-    }
-
-    // Converter data dd/mm/aaaa → Date
-    var dp = data_venda.split('/');
-    var dateVenda = (dp.length===3) ? new Date(+dp[2],+dp[1]-1,+dp[0]) : null;
-    var dtStr = data_venda;
-
-    var adicionadas = 0;
-    txs.forEach(function(tx) {
-      if (!tx.valor || tx.valor <= 0) return;
-      var prod = mapBandeiraPOS(tx.bandeira);
-      var tipo = mapTipoPOS(tx.tipo);
-      prod = ajustarProdutoPorTipo(prod, tipo);
-      APP.posTxs.push({
-        date: dateVenda,
-        dt: dtStr,
-        produto: prod,
-        tipo: tipo,
-        valor: tx.valor,
-        nsu: 'POS_' + pos + '_' + dtStr + '_' + Math.random().toString(36).substr(2,5),
-        rede: 'POS',
-        pos: pos,
-        ec: ec
-      });
-      adicionadas++;
-    });
-
-    APP.posCount++;
-    APP.posProcessando--;
-    document.getElementById('blk-pos').classList.add('ok');
-    atualizarChipPos(nome, '✓ ' + adicionadas + ' tx · POS ' + pos + ' · ' + dtStr, 'ok');
-    atualizarStatus();
-    document.getElementById('btn-run').disabled = (APP.tefTxs.length === 0 && APP.posTxs.length === 0);
-
-  } catch(e) {
-    APP.posProcessando--;
-    atualizarChipPos(nome, '✗ Erro: ' + e.message, 'err');
-    atualizarStatus();
-    console.error('Erro ao processar foto POS:', nome, e);
-  }
-}
-
-function atualizarStatus() {
-  var el = document.getElementById('proc-status');
-  if (!el) return;
-  if (APP.posProcessando > 0) {
-    el.innerHTML = '<span class="pi">⏳ Processando ' + APP.posProcessando + ' foto(s) via IA...</span>';
-  } else if (APP.posCount > 0) {
-    el.innerHTML = '<span class="pok">✓ ' + APP.posTxs.length + ' transação(ões) lidas de ' + APP.posCount + ' relatório(s)</span>';
-  } else {
-    el.style.display='none';
-  }
-}
 
 // ══════════════════════════════════════════════════════════
 // PARSERS
@@ -1002,7 +720,7 @@ function executar() {
 
     // 1b. Combinar TEF + fotos POS (maquininha) numa fonte única
     // POS não precisa dedup por NSU pois cada foto é 1 dia × 1 máquina
-    var tefMais = tef.concat(APP.posTxs);
+    var tefMais = tef;
 
     // 2. Se Cielo disponível → usar valores líquidos e datas de depósito reais dela
     var temCielo = APP.cieloTxs.length > 0;
@@ -1397,7 +1115,7 @@ function renderResumo() {
 
   var subBruto = R.temCielo
     ? 'TEF: ' + fBRL(totB) + ' · Cielo: ' + fBRL(cieloB)
-    : R.tef.length + ' tx TEF' + (APP.posTxs.length > 0 ? ' + ' + APP.posTxs.length + ' tx POS' : '');
+    : R.tef.length + ' tx TEF';
 
   // Atualizar info-box da agenda
   var infoAgenda = document.getElementById('info-agenda');
