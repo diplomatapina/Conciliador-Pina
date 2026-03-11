@@ -28,7 +28,7 @@ header{background:var(--ink);color:var(--paper);padding:0 40px;height:64px;displ
 main{max-width:1360px;margin:0 auto;padding:40px;}
 
 /* UPLOAD */
-.up-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-bottom:24px;}
+.up-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px;}
 @media(max-width:900px){.up-grid{grid-template-columns:1fr;}}
 .chip.chip-proc{background:var(--orange-bg);border-color:rgba(192,90,16,.2);}
 .chip.chip-proc .chip-name{color:var(--orange);}
@@ -198,6 +198,24 @@ tbody td{padding:11px 16px;font-family:var(--mono);font-size:12px;}
       <div class="chip-list" id="lst-bank"></div>
       <div class="hint"><b>📌 Exportar OFX no Bradesco Net Empresa:</b><br>Extrato → Últimos Lançamentos → Exportar → Formato OFX</div>
     </div>
+    <!-- RECEBÍVEIS CALENDÁRIO -->
+    <div class="up-block" id="blk-rec">
+      <div class="up-hdr">
+        <div class="up-ico">📅</div>
+        <div><h3>Recebíveis Calendário <span style="font-weight:400;color:var(--muted)">opcional</span></h3><p>CSV Cielo · Recebíveis Calendário · por Bandeira</p></div>
+      </div>
+      <div class="dz" id="dz-rec"
+        ondragenter="event.preventDefault();this.classList.add('over')"
+        ondragover="event.preventDefault();this.classList.add('over')"
+        ondragleave="this.classList.remove('over')"
+        ondrop="this.classList.remove('over');event.preventDefault();onF2(event.dataTransfer.files,'rec')">
+        <input type="file" id="inp-rec" accept=".csv,.txt" multiple style="display:none" onchange="onF2(this.files,'rec')">
+        <div class="dz-txt"><b>Arraste os CSVs aqui</b>Portal Cielo → Relatórios → Recebíveis → Calendário<br><span style="font-size:10px">Visualizar por: Bandeira e Tipo de lançamento</span></div>
+        <div class="dz-btn" onclick="event.stopPropagation();document.getElementById('inp-rec').click()">Selecionar Arquivos</div>
+      </div>
+      <div class="chip-list" id="lst-rec"></div>
+      <div class="hint">📌 Inclui aluguel de máquinas e ajustes. Melhora precisão da conciliação Visa.</div>
+    </div>
   </div>
 
   <div class="run-wrap">
@@ -349,7 +367,58 @@ var CUSTOS_FIXOS_CIELO = [
   { equip: 'Concentrador TEF', serial: '4100612-6', valor: 31.90 },
   { equip: 'Concentrador TEF', serial: '4100612-6', valor: 128.70 }
 ];
-var ALUGUEL_TOTAL_MES = CUSTOS_FIXOS_CIELO.reduce(function(s,c){return s+c.valor;},0); // 289.85
+var ALUGUEL_TOTAL_MES = 287.25; // Confirmado no Recebíveis Calendário Cielo (dia 5 de cada mês, abatido do Visa)
+
+// ══════════════════════════════════════════════════════════
+// PARSER RECEBÍVEIS CALENDÁRIO CIELO
+// Portal Cielo → Relatórios → Recebíveis → Calendário
+// Colunas: Data pagamento | Bandeira | Tipo lançamento | Qtd | Bruto | Taxa | Líquido | Agrupamento
+// ══════════════════════════════════════════════════════════
+function parseRec(raw) {
+  var lines = raw.split('\n');
+  var rows = [];
+  var headerIdx = -1;
+  for (var i = 0; i < lines.length; i++) {
+    if (lines[i].indexOf('Data de pagamento') >= 0 && lines[i].indexOf('Bandeira') >= 0) {
+      headerIdx = i; break;
+    }
+  }
+  if (headerIdx < 0) return rows;
+  for (var i = headerIdx + 1; i < lines.length; i++) {
+    var c = lines[i].trim().split(';').map(function(x){ return x.replace(/^"|"$/g,'').trim(); });
+    if (c.length < 7 || !c[0] || c[0].indexOf('/') < 0) continue;
+    var dp = c[0].split('/');
+    if (dp.length < 3) continue;
+    var date = new Date(+dp[2], +dp[1]-1, +dp[0]);
+    var banda = c[1], tipo = c[2], agrup = c[7] || '';
+    // Valor líquido — col 6 já vem com ponto decimal
+    var liq = parseFloat(c[6]) || 0;
+    if (!liq) continue;
+    // Mapear bandeira+tipo para produto do sistema
+    var produto = null;
+    if (tipo === 'Venda débito') {
+      if (banda === 'Visa')       produto = 'Visa Electron';
+      else if (banda === 'Mastercard') produto = 'Maestro';
+      else if (banda === 'Elo')   produto = 'ELO Debito';
+    } else if (tipo === 'Venda crédito') {
+      if (banda === 'Visa')            produto = 'Visa';
+      else if (banda === 'Mastercard') produto = 'Mastercard';
+      else if (banda === 'Elo')        produto = 'ELO Credito';
+      else if (banda === 'American Express') produto = 'Amex Credito';
+    } else if (tipo === 'Venda voucher') {
+      if (banda === 'Visa')       produto = 'Multibenefícios Visa';
+      else if (banda === 'Elo')   produto = 'Multibenefícios Elo';
+      else if (banda === 'Mastercard') produto = 'Multibenefícios Master';
+    } else if (tipo === 'Venda Pix') {
+      produto = 'Pix';
+    } else if (tipo === 'Aluguel de máquina' || tipo === 'Ajuste a débito') {
+      produto = '_aluguel'; // desconto sobre Visa
+    }
+    if (!produto) continue;
+    rows.push({ date: date, dt: c[0], produto: produto, liq: liq, tipo: tipo, agrup: agrup });
+  }
+  return rows;
+}
 
 // ══════════════════════════════════════════════════════════
 // ESTADO GLOBAL
@@ -358,9 +427,11 @@ var APP = {
   tefTxs: [],
   cieloTxs: [],
   bankTxs: [],
+  recTxs: [],    // Recebíveis Calendário Cielo
   tefCount: 0,
   cieloCount: 0,
   bankCount: 0,
+  recCount: 0,
   ecFiltro: '',
   ecList: [],
   resultado: null
@@ -423,6 +494,12 @@ function carregarArquivos(files, tipo) {
           hintEl.style.display='none';
           APP.ecFiltro='';
         }
+      } else if (tipo === 'rec') {
+        var rows = parseRec(txt);
+        APP.recTxs = APP.recTxs.concat(rows);
+        APP.recCount++;
+        adicionarChip('lst-rec', f.name, rows.length + ' registros');
+        document.getElementById('blk-rec').classList.add('ok');
       } else {
         var rows = parseBank(txt, f.name);
         APP.bankTxs = APP.bankTxs.concat(rows || []);
@@ -776,6 +853,24 @@ function executar() {
 
     // 2. Se Cielo disponível → usar valores líquidos e datas de depósito reais dela
     var temCielo = APP.cieloTxs.length > 0;
+    var temRec   = APP.recTxs.length > 0;
+
+    // Pré-processar Recebíveis Calendário: mapa [produto|ymd] → {liq, aluguel}
+    // Quando disponível, substitui o valor calculado da agenda pelo valor real da Cielo
+    var recMap = {}; // chave: "produto|yyyymmdd" → liq real
+    var recAluguel = {}; // chave: "yyyymmdd" → valor aluguel (negativo, sobre Visa)
+    if (temRec) {
+      for (var i = 0; i < APP.recTxs.length; i++) {
+        var rx = APP.recTxs[i];
+        var ymd = rx.date.getFullYear() + ('0'+(rx.date.getMonth()+1)).slice(-2) + ('0'+rx.date.getDate()).slice(-2);
+        if (rx.produto === '_aluguel') {
+          recAluguel[ymd] = (recAluguel[ymd] || 0) + rx.liq; // já é negativo
+        } else {
+          var rk = rx.produto + '|' + ymd;
+          recMap[rk] = (recMap[rk] || 0) + rx.liq;
+        }
+      }
+    }
 
     // Filtrar Cielo pelo EC selecionado (evita duplicar quando relatório vem com Raiz CNPJ)
     var cieloFiltrada = APP.cieloTxs;
@@ -870,9 +965,21 @@ function executar() {
     }
 
     // 3. Calcular líquido final e ordenar agenda
+    // Se Recebíveis Calendário disponível → substituir liq_final pelo valor real da Cielo
+    // (já inclui aluguel de máquinas abatido no dia 5)
     var agenda = Object.values(am).map(function(it) {
+      var ymd = it.dep_date.getFullYear() + ('0'+(it.dep_date.getMonth()+1)).slice(-2) + ('0'+it.dep_date.getDate()).slice(-2);
+      var rk  = it.produto + '|' + ymd;
+      var liqRec = temRec ? recMap[rk] : null;
+      // Aluguel só sobre Visa crédito
+      var alugRec = (temRec && (it.produto === 'Visa' || it.produto === 'Visa Electron')) ? (recAluguel[ymd] || 0) : 0;
+      var liqFinal = liqRec !== undefined && liqRec !== null
+        ? liqRec + alugRec          // valor real do recebíveis + aluguel abatido
+        : it.liq - it.tarifa_dep;   // fallback: cálculo normal
       return Object.assign({}, it, {
-        liq_final: it.liq - it.tarifa_dep,
+        liq_final: liqFinal,
+        liq_rec: liqRec,            // guardar para diagnóstico
+        fonte_liq: liqRec !== undefined && liqRec !== null ? 'rec' : (it.fonte || 'tef'),
         status: 'pendente',
         bank_val: null, bank_dt: null, diff: null
       });
@@ -1039,19 +1146,19 @@ function executar() {
       return null;
     }
 
-    // Pré-calcular: para cada (prod, ymd) → soma de todos os lotes bancários
-    // Isso resolve o problema de múltiplos lançamentos do mesmo tipo no mesmo dia
-    var bankPorProdDia = {}; // chave: "prod|ymd" → {soma, indices[]}
+    // Pré-calcular: para cada (prod, ymd, idx) → lançamentos individuais do banco
+    // Quando há múltiplos lançamentos do mesmo tipo no mesmo dia (ex: dois ECs Visa),
+    // buscar o mais próximo individualmente — não somar tudo
+    var bankPorProdDia = {}; // chave: "prod|ymd|idx" → {soma, indices[]}
     for (var k = 0; k < bank.length; k++) {
       if (usados[k]) continue;
       var b = bank[k];
       var bProd = memoParaProd(b.memo || '');
       if (!bProd) continue;
       var ymd = b.date.toISOString().split('T')[0].replace(/-/g,'');
-      var chave = bProd + '|' + ymd;
-      if (!bankPorProdDia[chave]) bankPorProdDia[chave] = { soma: 0, idxs: [] };
-      bankPorProdDia[chave].soma += b.valor;
-      bankPorProdDia[chave].idxs.push(k);
+      // Cada lançamento individual tem sua própria chave (usando índice k)
+      var chave = bProd + '|' + ymd + '|' + k;
+      bankPorProdDia[chave] = { soma: b.valor, idxs: [k] };
     }
 
     for (var j = 0; j < agenda.length; j++) {
@@ -1067,16 +1174,14 @@ function executar() {
       var dep1   = addDiasUteis(item.dep_date, 1).toISOString().split('T')[0].replace(/-/g,'');
 
       var melhorChave = null, melhorDiff = 999999;
-      var candidatos = [depYMD, dep1];
-      for (var ci = 0; ci < candidatos.length; ci++) {
-        var chave = prodBusca + '|' + candidatos[ci];
-        if (!bankPorProdDia[chave]) continue;
-        var soma = bankPorProdDia[chave].soma;
-        // Todos os índices ainda disponíveis?
-        var todosLivres = bankPorProdDia[chave].idxs.every(function(idx){ return !usados[idx]; });
-        if (!todosLivres) continue;
-        var df = Math.abs(soma - item.liq_final);
-        if (df < melhorDiff) { melhorChave = chave; melhorDiff = df; }
+      for (var ck in bankPorProdDia) {
+        var partes = ck.split('|');
+        if (partes[0] !== prodBusca) continue;
+        if (partes[1] !== depYMD && partes[1] !== dep1) continue;
+        var lote = bankPorProdDia[ck];
+        if (usados[lote.idxs[0]]) continue;
+        var df = Math.abs(lote.soma - item.liq_final);
+        if (df < melhorDiff) { melhorChave = ck; melhorDiff = df; }
       }
 
       var tol = Math.max(item.liq_final * 0.025, 1.00); // tolerância 2,5% ou R$1,00
