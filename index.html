@@ -287,7 +287,7 @@ var TAXAS = {
   'ELO Credito':        {taxa:0.0288, tipo:'credito_vista', prazo:15, regra:'corridos'},
   'ELO Debito':         {taxa:0.0110, tipo:'debito',        prazo:1,  regra:'corridos'},
   'Amex Credito':       {taxa:0.0268, tipo:'credito_vista', prazo:15, regra:'corridos'},
-  'Hipercard':          {taxa:0.0268, tipo:'credito_vista', prazo:15, regra:'corridos'},
+  'Diners Credito':     {taxa:0.0268, tipo:'credito_vista', prazo:15, regra:'corridos'},
   'Alelo Refeicao':     {taxa:0.0360, tipo:'voucher', prazo:15, regra:'corridos',
     historico: [{ate: '2026-02-06', taxa:0.0705, prazo:30}]},
   'Alelo Alimentação':  {taxa:0.0360, tipo:'voucher', prazo:15, regra:'corridos',
@@ -299,22 +299,41 @@ var TAXAS = {
   'Ticket Restaurante': {taxa:0.0600, tipo:'voucher_ticket', prazo:27, regra:'corte_ter'},
   'Ticket Alimentacao': {taxa:0.0600, tipo:'voucher_ticket', prazo:27, regra:'corte_ter'},
   'Ticket Flex':        {taxa:0.0580, tipo:'voucher_ticket', prazo:27, regra:'corte_ter'},
-  'Multibenefícios Visa':   {taxa:0.0620, tipo:'credito_vista', prazo:2, regra:'corridos'},
-  'Multibenefícios Master': {taxa:0.0620, tipo:'credito_vista', prazo:2, regra:'corridos'},
-  'Multibenefícios Elo':    {taxa:0.0620, tipo:'credito_vista', prazo:2, regra:'corridos'},
+  'Pix':                    {taxa:0.0000, tipo:'pix',            prazo:0,  regra:'mesmo_dia'},
+  'Multibenefícios Visa':   {taxa:0.0360, tipo:'credito_vista', prazo:15, regra:'corridos',
+    historico: [{ate: '2026-01-31', taxa:0.0500, prazo:30}]},
+  'Multibenefícios Master': {taxa:0.0360, tipo:'credito_vista', prazo:15, regra:'corridos',
+    historico: [{ate: '2026-01-31', taxa:0.0500, prazo:30}]},
+  'Multibenefícios Elo':    {taxa:0.0360, tipo:'credito_vista', prazo:15, regra:'corridos',
+    historico: [{ate: '2026-01-31', taxa:0.0450, prazo:30}]},
+  // Pré-pago crédito (2 dias corridos)
+  'Visa Pré Pago':          {taxa:0.0237, tipo:'credito_vista', prazo:2,  regra:'corridos'},
+  'Master Pré Pago':        {taxa:0.0237, tipo:'credito_vista', prazo:2,  regra:'corridos'},
+  'Elo Pré Pago':           {taxa:0.0288, tipo:'credito_vista', prazo:2,  regra:'corridos'},
+  // Pré-pago débito (2 dias corridos — mesmo prazo débito normal)
+  'Visa Débito Pré Pago':   {taxa:0.0096, tipo:'debito',        prazo:2,  regra:'corridos'},
+  'Master Débito Pré Pago': {taxa:0.0097, tipo:'debito',        prazo:2,  regra:'corridos'},
+  'Elo Débito Pré Pago':    {taxa:0.0110, tipo:'debito',        prazo:2,  regra:'corridos'},
+  // Exterior / Conversor de moedas (5 dias corridos)
+  'Visa Exterior':          {taxa:0.0237, tipo:'credito_vista', prazo:5,  regra:'corridos'},
+  'Master Exterior':        {taxa:0.0237, tipo:'credito_vista', prazo:5,  regra:'corridos'},
+  'Elo Exterior':           {taxa:0.0288, tipo:'credito_vista', prazo:5,  regra:'corridos'},
 };
 
 var LBL = {
   'Visa':'Visa Crédito','Mastercard':'Mastercard Crédito',
   'Visa Electron':'Visa Débito','Maestro':'Mastercard Débito',
   'ELO Credito':'Elo Crédito','ELO Debito':'Elo Débito',
-  'Amex Credito':'Amex','Hipercard':'Hipercard',
+  'Amex Credito':'Amex','Hipercard':'Hipercard','Diners Credito':'Diners',
   'Alelo Refeicao':'Alelo Refeição (PAT)','Alelo Alimentação':'Alelo Alim. (PAT)',
   'Sodexo Refeicao':'Pluxee Refeição','Sodexo Alimentacao':'Pluxee Alimentação',
   'VR Beneficios':'VR Benefícios','VR Refeicao':'VR Refeição',
   'Ticket Restaurante':'Ticket Restaurante','Ticket Alimentacao':'Ticket Alimentação',
   'Ticket Flex':'Ticket Flex','Pix':'PIX',
-  'Multibenefícios Visa':'Multibenef. Visa','Multibenefícios Master':'Multibenef. Master','Multibenefícios Elo':'Multibenef. Elo'
+  'Multibenefícios Visa':'Multibenef. Visa','Multibenefícios Master':'Multibenef. Master','Multibenefícios Elo':'Multibenef. Elo',
+  'Visa Pré Pago':'Visa Pré Pago','Master Pré Pago':'Master Pré Pago','Elo Pré Pago':'Elo Pré Pago',
+  'Visa Débito Pré Pago':'Visa Déb. Pré Pago','Master Débito Pré Pago':'Master Déb. Pré Pago','Elo Débito Pré Pago':'Elo Déb. Pré Pago',
+  'Visa Exterior':'Visa Exterior','Master Exterior':'Master Exterior','Elo Exterior':'Elo Exterior'
 };
 
 // ══════════════════════════════════════════════════════════
@@ -473,6 +492,9 @@ function parseTEF(raw) {
     var date = new Date(+dp[2], +dp[1]-1, +dp[0]);
     // PIX = SOMENTE Rede=CardSE E Produto=Pix. Ticket no CardSE é Voucher, nao PIX.
     var produtoFinal = (rede === 'CardSE' && produto === 'Pix') ? 'Pix' : produto;
+    // Normalizar variantes de nomes no TEF
+    var TEF_MAP = {'Visa Voucher':'Multibenefícios Visa','Elo Voucher':'Multibenefícios Elo','Alelo Beneficio':'Alelo Refeicao','Smartnet':'VR Beneficios'};
+    if (TEF_MAP[produtoFinal]) produtoFinal = TEF_MAP[produtoFinal];
     rows.push({ date: date, dt: dt.split(' ')[0], produto: produtoFinal, tipo: tipo, valor: v, nsu: nsu, rede: rede });
   }
   return rows;
@@ -501,11 +523,31 @@ function parseCielo(raw) {
   function mapProd(forma, banda) {
     var f = (forma||'').trim(), b = (banda||'').trim();
     if (f === 'Pix') return 'Pix';
-    if (f === 'Multibenefícios' || f === 'Multibenefícios') {
-      // Prazo 2 dias — produto separado para não misturar com crédito normal
+    if (f === 'Multibenefícios') {
       if (b === 'Visa')       return 'Multibenefícios Visa';
       if (b === 'Mastercard') return 'Multibenefícios Master';
       if (b === 'Elo')        return 'Multibenefícios Elo';
+    }
+    if (f === 'Crédito pré-pago') {
+      if (b === 'Visa')       return 'Visa Pré Pago';
+      if (b === 'Mastercard') return 'Master Pré Pago';
+      if (b === 'Elo')        return 'Elo Pré Pago';
+    }
+    if (f === 'Débito pré-pago') {
+      if (b === 'Visa')       return 'Visa Débito Pré Pago';
+      if (b === 'Mastercard') return 'Master Débito Pré Pago';
+      if (b === 'Elo')        return 'Elo Débito Pré Pago';
+    }
+    if (f === 'Crédito conversor de moedas') {
+      if (b === 'Visa')       return 'Visa Exterior';
+      if (b === 'Mastercard') return 'Master Exterior';
+      if (b === 'Elo')        return 'Elo Exterior';
+      return 'Visa Exterior'; // fallback
+    }
+    if (f.indexOf('Exterior') >= 0) {
+      if (b === 'Visa')       return 'Visa Exterior';
+      if (b === 'Mastercard') return 'Master Exterior';
+      if (b === 'Elo')        return 'Elo Exterior';
     }
     if (f.indexOf('Débito') >= 0 || f.indexOf('Debito') >= 0) {
       if (b === 'Visa')       return 'Visa Electron';
@@ -517,8 +559,9 @@ function parseCielo(raw) {
       if (b === 'Mastercard')      return 'Mastercard';
       if (b === 'Elo')             return 'ELO Credito';
       if (b === 'American Express') return 'Amex Credito';
+      if (b === 'Diners')           return 'Diners Credito';
     }
-    return null; // ignorar linhas não mapeadas
+    return null;
   }
 
   for (var i = headerIdx + 1; i < lines.length; i++) {
