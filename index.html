@@ -456,7 +456,9 @@ function getTaxa(produto, dataVenda) {
   if (!cfg) return {taxa:0, prazo:0, regra:'corridos'};
   // Verificar histórico de taxas por data
   if (cfg.historico && dataVenda) {
-    var ds = dataVenda.toISOString().split('T')[0];
+    // Usar data local (não UTC) para evitar desvio de fuso horário
+    var d = new Date(dataVenda);
+    var ds = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
     for (var i = 0; i < cfg.historico.length; i++) {
       var h = cfg.historico[i];
       if (ds <= h.ate) {
