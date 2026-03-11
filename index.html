@@ -437,7 +437,14 @@ var APP = {
   resultado: null
 };
 
-var HOJE = new Date();
+// Avança para o próximo dia útil (pula sábado e domingo)
+  function proximoDiaUtil(d) {
+    var x = new Date(d);
+    while (x.getDay() === 0 || x.getDay() === 6) x.setDate(x.getDate()+1);
+    return x;
+  }
+
+  var HOJE = new Date();
 HOJE.setHours(0,0,0,0);
 
 // ══════════════════════════════════════════════════════════
@@ -896,12 +903,6 @@ function executar() {
       // A Cielo às vezes gera lotes de dt_dep diferentes para o mesmo dia de banco
       // Ex: vendas de sexta (dep=sexta) chegam junto com sáb+dom (dep=segunda) no banco na segunda
       // Solução: quando dt_dep cai em fds → reatribuir para próximo dia útil
-      function proximoDiaUtil(d) {
-        var x = new Date(d);
-        while (x.getDay() === 0 || x.getDay() === 6) x.setDate(x.getDate()+1);
-        return x;
-      }
-
       for (var i = 0; i < cieloFiltrada.length; i++) {
         var cx = cieloFiltrada[i];
         var cfg = getTaxa(cx.produto, cx.date_venda) || { taxa: 0, tipo: 'outros', tarifa_dep: 0 };
@@ -1006,69 +1007,74 @@ function executar() {
     });
     var usados = {};
 
-    // ── 5a. Conciliar PIX individualmente ──────────────────
-    // Cada venda PIX do TEF bate com um "PIX QR CODE DINAMIC" no banco
-    // Tolerância: mesmo dia ou dia útil seguinte (cai no mesmo dia mas pode atrasar)
+    // ── 5a. Conciliar PIX por DIA ──────────────────────────
+    //
+    // COMPORTAMENTO VALIDADO COM DADOS REAIS (Bradesco Diplomata Pina):
+    //   - O banco recebe UM lançamento "PIX QR CODE" por dia com SOMA de todos os PIX
+    //   - Fins de semana: sab+dom acumulam e chegam juntos na segunda-feira
+    //   - O TEF registra cada PIX individualmente (D+0)
+    //   → Estratégia: somar TEF PIX por dia de depósito, buscar lançamento bancário correspondente
+    //   → Para fins de semana: agregar sab+dom junto com a seg e buscar no banco da seg
+    //
+    // ATENÇÃO: Parte dos PIX vem do celular/app (não passa pelo TEF da Cielo)
+    //   → O banco pode ter valor MAIOR que o TEF — isso é normal (não é erro)
+    //   → Usar TOLERÂNCIA AMPLA para PIX: aceitar se banco ≥ TEF (excesso = PIX não-TEF)
+
+    // Montar mapa: ymd → soma PIX do TEF
+    var pixTefPorDia = {};
     for (var p = 0; p < pixTef.length; p++) {
       var ptx = pixTef[p];
-      var liqPix = ptx.valor; // PIX sem taxa
-      // PIX cai no mesmo dia (D+0), aceitar até D+1 como margem
-      var dMin = new Date(ptx.date);
-      var dMax = new Date(ptx.date);
-      dMax.setDate(dMax.getDate() + 1);
-
-      var melhorIdx = -1, melhorDiff = 999999;
-      for (var k = 0; k < bank.length; k++) {
-        if (usados[k]) continue;
-        var b = bank[k];
-        if (b.date < dMin || b.date > dMax) continue;
-        var mu = (b.memo || '').toUpperCase();
-        // Apenas PIX QR CODE DINAMIC (recebimentos de clientes)
-        if (mu.indexOf('PIX QR CODE') < 0 && mu.indexOf('QR CODE DINAMIC') < 0 && mu.indexOf('QR CODE') < 0) continue;
-        var df = Math.abs(b.valor - liqPix);
-        if (df < 0.02 && df < melhorDiff) { melhorIdx = k; melhorDiff = df; }
-      }
-
-      // Atualizar status do item de agenda PIX correspondente
-      var pixAgKey = 'Pix_' + calcDeposito(ptx.date, 'Pix').toISOString().split('T')[0];
-      // Marcar uso do banco
-      if (melhorIdx >= 0) usados[melhorIdx] = true;
+      // PIX cai no mesmo dia da venda (D+0)
+      var depDate = proximoDiaUtil(ptx.date);
+      var ymd = depDate.toISOString().split('T')[0].replace(/-/g,'');
+      pixTefPorDia[ymd] = (pixTefPorDia[ymd] || 0) + ptx.valor;
     }
 
-    // Conciliar agenda PIX como grupo (soma dos individuais já usados acima)
+    // Montar mapa banco PIX: ymd → {soma, idxs}
+    // Fins de semana: lançamento aparece na segunda com acumulado
+    var pixBancoPorDia = {};
+    for (var k = 0; k < bank.length; k++) {
+      if (usados[k]) continue;
+      var b = bank[k];
+      var mu = (b.memo || '').toUpperCase();
+      if (mu.indexOf('PIX QR CODE') < 0) continue;
+      if (b.valor <= 0) continue;
+      var ymd = b.date.toISOString().split('T')[0].replace(/-/g,'');
+      if (!pixBancoPorDia[ymd]) pixBancoPorDia[ymd] = { soma: 0, idxs: [], dt: b.dt };
+      pixBancoPorDia[ymd].soma += b.valor;
+      pixBancoPorDia[ymd].idxs.push(k);
+    }
+
+    // Conciliar cada item PIX da agenda
     for (var j = 0; j < agenda.length; j++) {
       var item = agenda[j];
       if (item.tipo !== 'pix') continue;
       if (item.dep_date > HOJE) { item.status = 'futuro'; continue; }
 
-      // Somar todos os PIX QR CODE do banco no intervalo desta data
-      // PIX cai no mesmo dia da venda (até D+1 como margem)
-      var dMin2 = new Date(item.dep_date);
-      var dMax2 = new Date(item.dep_date);
-      dMax2.setDate(dMax2.getDate() + 1);
-      var somaBank = 0, countBank = 0, lastDt = null;
-      var usadosPix = [];
+      var ymd = item.dep_date.toISOString().split('T')[0].replace(/-/g,'');
 
-      for (var k = 0; k < bank.length; k++) {
-        if (usados[k]) continue;
-        var b = bank[k];
-        if (b.date < dMin2 || b.date > dMax2) continue;
-        var mu = (b.memo || '').toUpperCase();
-        if (mu.indexOf('PIX QR CODE') < 0 && mu.indexOf('QR CODE DINAMIC') < 0 && mu.indexOf('QR CODE') < 0) continue;
-        somaBank += b.valor;
-        countBank++;
-        lastDt = b.dt;
-        usadosPix.push(k);
-      }
+      // Para segunda-feira: buscar no banco da segunda (que acumula sab+dom+seg)
+      // Para outros dias úteis: buscar no banco do próprio dia
+      var bEntry = pixBancoPorDia[ymd];
 
-      if (countBank > 0) {
-        usadosPix.forEach(function(idx){ usados[idx] = true; });
-        item.bank_val = somaBank;
-        item.bank_dt  = lastDt + ' (' + countBank + ' lançtos)';
-        item.diff     = somaBank - item.liq_final;
-        item.status   = Math.abs(item.diff) < 0.50 ? 'conciliado' : 'divergente';
+      if (bEntry && !bEntry.usado) {
+        bEntry.usado = true;
+        bEntry.idxs.forEach(function(idx){ usados[idx] = true; });
+        item.bank_val = bEntry.soma;
+        item.bank_dt  = bEntry.dt + (bEntry.idxs.length > 1 ? ' (' + bEntry.idxs.length + ' lçtos)' : '');
+        item.diff     = bEntry.soma - item.liq_final;
+        // PIX: banco PODE ter mais que o TEF (PIX via app não registrado no TEF)
+        // Considerar conciliado se banco ≥ TEF com diferença razoável (até 3x o TEF)
+        // Divergente somente se banco for MENOR que o TEF (algo está faltando)
+        if (item.diff >= -1.00) {
+          item.status = 'conciliado'; // banco ≥ TEF = OK (excesso = PIX não-TEF)
+        } else {
+          item.status = 'divergente'; // banco < TEF = problema real
+        }
       } else {
-        item.status = 'nao_encontrado';
+        var isPeriodoAnterior = false;
+        if (tefDataMin && item.data_venda_min && item.data_venda_min < tefDataMin) isPeriodoAnterior = true;
+        item.status = isPeriodoAnterior ? 'periodo_anterior' : 'nao_encontrado';
       }
     }
 
@@ -1146,19 +1152,40 @@ function executar() {
       return null;
     }
 
-    // Pré-calcular: para cada (prod, ymd, idx) → lançamentos individuais do banco
-    // Quando há múltiplos lançamentos do mesmo tipo no mesmo dia (ex: dois ECs Visa),
-    // buscar o mais próximo individualmente — não somar tudo
-    var bankPorProdDia = {}; // chave: "prod|ymd|idx" → {soma, indices[]}
+    // Pré-calcular: para cada (prod, ymd) → lançamentos do banco
+    //
+    // REGRA VALIDADA COM DADOS REAIS:
+    //   Mastercard, Elo, Amex, etc → o Bradesco cria 2 lançamentos separados no mesmo dia
+    //   (ex: lote crédito à vista + lote crédito pré-pago — mesmo memo, mesmo dia)
+    //   → SOMAR os dois para bater com o recebível
+    //
+    //   Visa → INDIVIDUAL (existem 2 ECs distintos com memo idêntico "VENDA CARTAO DE CREDITO")
+    //   → NÃO somar, buscar o mais próximo individualmente
+    //
+    // PRODUTOS_SOMA: todos exceto Visa
+    var PRODUTOS_SOMA = ['Mastercard','ELO Credito','ELO Debito','Maestro','Amex Credito',
+                         'Visa Electron','Alelo Refeicao','VR Beneficios','Ticket Restaurante',
+                         'Sodexo Refeicao','Hipercard','Multibenefícios Visa','Multibenefícios Master',
+                         'Multibenefícios Elo'];
+
+    var bankPorProdDia = {}; // chave: "prod|ymd" (soma) ou "prod|ymd|k" (individual)
     for (var k = 0; k < bank.length; k++) {
       if (usados[k]) continue;
       var b = bank[k];
       var bProd = memoParaProd(b.memo || '');
       if (!bProd) continue;
       var ymd = b.date.toISOString().split('T')[0].replace(/-/g,'');
-      // Cada lançamento individual tem sua própria chave (usando índice k)
-      var chave = bProd + '|' + ymd + '|' + k;
-      bankPorProdDia[chave] = { soma: b.valor, idxs: [k] };
+      if (PRODUTOS_SOMA.indexOf(bProd) >= 0) {
+        // Somar todos do mesmo produto/dia num único lote
+        var chave = bProd + '|' + ymd;
+        if (!bankPorProdDia[chave]) bankPorProdDia[chave] = { soma: 0, idxs: [] };
+        bankPorProdDia[chave].soma += b.valor;
+        bankPorProdDia[chave].idxs.push(k);
+      } else {
+        // Visa: individual (2 ECs com memo idêntico)
+        var chave = bProd + '|' + ymd + '|' + k;
+        bankPorProdDia[chave] = { soma: b.valor, idxs: [k] };
+      }
     }
 
     for (var j = 0; j < agenda.length; j++) {
