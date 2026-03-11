@@ -314,6 +314,10 @@ var TAXAS = {
   'Sodexo Alimentacao': {taxa:0.0580, tipo:'voucher_sodexo', tarifa_dep:11.30, prazo:29, regra:'corte_seg'},
   'VR Beneficios':      {taxa:0.0630, tipo:'voucher_vr',    tarifa_dep:6.51,  prazo:28, regra:'corte_seg'},
   'VR Refeicao':        {taxa:0.0630, tipo:'voucher_vr',    tarifa_dep:6.51,  prazo:28, regra:'corte_seg'},
+  // VR PAT (Refeição PAT / Alimentação PAT) — taxa 3,60%, prazo 15 dias, corte dia 9 do mês
+  // No TEF pode aparecer como produto separado; por ora mapeado igual VR não-PAT no banco
+  'VR Refeicao PAT':    {taxa:0.0360, tipo:'voucher_vr',    tarifa_dep:0.00,  prazo:15, regra:'corridos'},
+  'VR Alimentacao PAT': {taxa:0.0360, tipo:'voucher_vr',    tarifa_dep:0.00,  prazo:15, regra:'corridos'},
   'Ticket Restaurante': {taxa:0.0600, tipo:'voucher_ticket', prazo:27, regra:'corte_ter'},
   'Ticket Alimentacao': {taxa:0.0600, tipo:'voucher_ticket', prazo:27, regra:'corte_ter'},
   'Ticket Flex':        {taxa:0.0580, tipo:'voucher_ticket', prazo:27, regra:'corte_ter'},
@@ -368,6 +372,25 @@ var CUSTOS_FIXOS_CIELO = [
   { equip: 'Concentrador TEF', serial: '4100612-6', valor: 128.70 }
 ];
 var ALUGUEL_TOTAL_MES = 287.25; // Confirmado no Recebíveis Calendário Cielo (dia 5 de cada mês, abatido do Visa)
+
+// ── Anuidade VR ───────────────────────────────────────────
+// Tabela progressiva baseada no volume mensal de repasse:
+//   R$0,01–R$3.600      → R$118/ano
+//   R$3.600,01–R$12.000 → R$232/ano  ← faixa atual (~R$10–11k/mês)
+//   R$12.000,01–R$24.000→ R$388/ano
+//   R$24.000,01–R$48.000→ R$644/ano
+// Cobrada 1x/ano — descontada diretamente do repasse (não aparece como débito no banco)
+// Afiliação Smartnet nº 4528352 · Depósito via TRANSFERENCIA PIX toda segunda-feira
+// Agência no contrato (1771) foi migrada automaticamente para AG.05639 pelo Bradesco
+var VR_ANUIDADE_FAIXAS = [
+  { ate: 3600,   valor: 118 },
+  { ate: 12000,  valor: 232 },
+  { ate: 24000,  valor: 388 },
+  { ate: 48000,  valor: 644 },
+  { ate: 96000,  valor: 926 },
+  { ate: 600000, valor: 1538 },
+  { ate: Infinity, pct: 0.002 }  // acima R$600k: 0,20%
+];
 
 // ══════════════════════════════════════════════════════════
 // PARSER RECEBÍVEIS CALENDÁRIO CIELO
@@ -1000,7 +1023,7 @@ function executar() {
       if (b.valor <= 0) return false;
       var mu = (b.memo || '').toUpperCase();
       // Ignorar transferências PIX (saídas/delivery por CNPJ)
-      if (mu.indexOf('TRANSFERENCIA PIX') >= 0) return false;
+      if (mu.indexOf('TRANSFERENCIA PIX') >= 0 && mu.indexOf('VR BEN') < 0) return false;
       // Ignorar rendimentos de investimento
       if (mu.indexOf('RENTAB') >= 0 || mu.indexOf('INVEST FACIL') >= 0) return false;
       return true;
@@ -1121,6 +1144,8 @@ function executar() {
       { frag: 'CIELO VDA CREDITO ELO',       prod: 'ELO Credito' },
       { frag: 'VENDA CARTAO DE CREDITO',     prod: 'Visa' },        // SOMENTE Visa
       { frag: 'CIELO AMEX',                  prod: 'Amex Credito' },
+      { frag: 'VOUCHER VISA - CIELO',          prod: 'Multibenefícios Visa' },  // a partir mar/2026: separado
+      { frag: 'VOUCHER ELO - CIELO',           prod: 'Multibenefícios Elo' },   // a partir mar/2026: separado
       { frag: 'PAT BENEFICIO CREDITO',       prod: 'Alelo Refeicao' },
       { frag: 'RECEBIMENTO FORNECEDOR ALELO',prod: 'Alelo Refeicao' },
       { frag: 'RECEBIMENTO FORNECEDOR TICKET',prod:'Ticket Restaurante' },
@@ -1129,6 +1154,9 @@ function executar() {
       { frag: 'RECEBIMENTO FORNECEDOR SMARTNET', prod: 'VR Beneficios' },
       { frag: 'SMARTNET',                    prod: 'VR Beneficios' },
       { frag: 'VR BENEFICIO',                prod: 'VR Beneficios' },
+      { frag: 'TRANSFERENCIA PIX REM: VR BEN', prod: 'VR Beneficios' },  // VR paga via TED/PIX semanal
+      { frag: 'TRANSFERENCIA PIX REM: VR BEF', prod: 'VR Beneficios' },  // variação de grafia
+      { frag: 'TRANSFERENCIA PIX REM: VR BEN', prod: 'VR Beneficios' },
       { frag: 'SODEXO',                      prod: 'Sodexo Refeicao' },
       { frag: 'PLUXEE',                      prod: 'Sodexo Refeicao' },
       { frag: 'TICKET',                      prod: 'Ticket Restaurante' },
@@ -1230,7 +1258,29 @@ function executar() {
           vendaEstimada.setDate(vendaEstimada.getDate() - prazo2);
           if (vendaEstimada < tefDataMin) isPeriodoAnterior = true;
         }
-        item.status = isPeriodoAnterior ? 'periodo_anterior' : 'nao_encontrado';
+        // Caso especial: Multibenefícios Visa/Elo antes de mar/2026
+        // O Bradesco depositava junto com Visa crédito em 'VENDA CARTAO DE CREDITO'
+        // A partir de mar/2026 passou a depositar em 'VOUCHER VISA/ELO - CIELO' separado
+        // → Verificar se existe lançamento Visa no mesmo dia que "absorveu" este voucher
+        if (!isPeriodoAnterior &&
+            (item.produto === 'Multibenefícios Visa' || item.produto === 'Multibenefícios Master' ||
+             item.produto === 'Multibenefícios Elo')) {
+          var ymdM = item.dep_date.toISOString().split('T')[0].replace(/-/g,'');
+          var visaChave = 'Visa|' + ymdM;
+          var visaAlt   = 'Visa|' + addDiasUteis(item.dep_date,1).toISOString().split('T')[0].replace(/-/g,'');
+          var temVisaNodia = bankPorProdDia[visaChave] || bankPorProdDia[visaAlt];
+          if (temVisaNodia) {
+            // Multibenef foi depositado junto com o Visa — considerado conciliado (embutido)
+            item.status   = 'conciliado';
+            item.bank_val = item.liq_final; // valor esperado = recebido (embutido no Visa)
+            item.bank_dt  = '(incluído no Visa crédito)';
+            item.diff     = 0;
+          } else {
+            item.status = isPeriodoAnterior ? 'periodo_anterior' : 'nao_encontrado';
+          }
+        } else {
+          item.status = isPeriodoAnterior ? 'periodo_anterior' : 'nao_encontrado';
+        }
       }
     }
 
