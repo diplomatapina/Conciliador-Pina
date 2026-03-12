@@ -114,6 +114,8 @@ tbody td{padding:11px 16px;font-family:var(--mono);font-size:12px;}
 .sc-v{font-size:32px;font-weight:900;font-family:var(--mono);}
 .sc-l{font-size:11px;color:var(--muted);font-family:var(--mono);margin-top:4px;}
 .row-pant{background:#f5f5f5!important;color:var(--muted)!important;}
+.row-fora{background:#e3f2fd!important;}
+.row-agd{background:#e8f4fd!important;}
 
 /* MISC */
 .mini-bar{display:flex;align-items:center;gap:8px;}
@@ -248,6 +250,8 @@ tbody td{padding:11px 16px;font-family:var(--mono);font-size:12px;}
         <select id="ft-agst" onchange="desenharAgenda()">
           <option value="">Todos</option><option value="conciliado">Conciliado</option>
           <option value="divergente">Divergente</option><option value="nao_encontrado">Não encontrado no banco</option>
+          <option value="aguardando_deposito">🕐 Aguardando no extrato</option>
+          <option value="fora_extrato">📂 Fora do extrato</option>
           <option value="periodo_anterior">⏮ Período anterior</option>
           <option value="pendente">Pendente</option><option value="futuro">Futuro</option>
         </select>
@@ -260,6 +264,8 @@ tbody td{padding:11px 16px;font-family:var(--mono);font-size:12px;}
         <select id="ft-cst" onchange="desenharConcil()">
           <option value="">Todos</option><option value="conciliado">✅ Conciliado</option>
           <option value="divergente">⚠️ Divergente</option><option value="nao_encontrado">❌ Não encontrado no banco</option>
+          <option value="aguardando_deposito">🕐 Aguardando no extrato</option>
+          <option value="fora_extrato">📂 Fora do extrato</option>
           <option value="periodo_anterior">⏮ Período anterior</option>
         </select>
       </div>
@@ -870,12 +876,15 @@ function calcDeposito(date, produto) {
   var c = getTaxa(produto, date);
   if (!c) return null;
   if (c.regra === 'mesmo_dia') return new Date(date);
-  if (c.regra === 'corridos')  return addDiasCorridos(date, c.prazo);
-  if (c.regra === 'uteis')     return addDiasUteis(date, c.prazo);
-  if (c.regra === 'corte_seg') { var cut = proximaSegunda(date); var r = new Date(cut); r.setDate(r.getDate() + c.prazo); return r; }
-  if (c.regra === 'corte_ter') { var cut = proximaTerca(date);   var r = new Date(cut); r.setDate(r.getDate() + c.prazo); return r; }
-  if (c.regra === 'corte_dom') { var cut = proximoDomingo(date); var r = new Date(cut); r.setDate(r.getDate() + c.prazo); return r; }
-  return null;
+  var result = null;
+  if (c.regra === 'corridos')  result = addDiasCorridos(date, c.prazo);
+  else if (c.regra === 'uteis') result = addDiasUteis(date, c.prazo);
+  else if (c.regra === 'corte_seg') { var cut1 = proximaSegunda(date); result = new Date(cut1); result.setDate(result.getDate() + c.prazo); }
+  else if (c.regra === 'corte_ter') { var cut2 = proximaTerca(date);   result = new Date(cut2); result.setDate(result.getDate() + c.prazo); }
+  else if (c.regra === 'corte_dom') { var cut3 = proximoDomingo(date); result = new Date(cut3); result.setDate(result.getDate() + c.prazo); }
+  // Garantir que o resultado final sempre caia em dia útil (sáb→seg, dom→seg)
+  if (result) { while (result.getDay() === 0 || result.getDay() === 6) result.setDate(result.getDate() + 1); }
+  return result;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1045,6 +1054,13 @@ function executar() {
     });
     var usados = {};
 
+    // Data máxima do extrato bancário carregado — usada para status 'fora_extrato'
+    var bankMaxDate = null;
+    for (var _bk = 0; _bk < APP.bankTxs.length; _bk++) {
+      var _bd = APP.bankTxs[_bk].date;
+      if (!bankMaxDate || _bd > bankMaxDate) bankMaxDate = _bd;
+    }
+
     // ── 5a. Conciliar PIX por DIA ──────────────────────────
     //
     // COMPORTAMENTO VALIDADO COM DADOS REAIS (Bradesco Diplomata Pina):
@@ -1166,8 +1182,10 @@ function executar() {
       // ── PROBLEMA 1 CORRIGIDO: "RECEBIMENTO FORNECEDOR CIELO" = Multibenef. Visa ──
       // O Bradesco lança pequenos valores diários de voucher Visa com este memo
       { frag: 'RECEBIMENTO FORNECEDOR CIELO',prod: 'Multibenefícios Visa' },
+      // "PAT BENEFICIO CREDITO CIELO" = voucher multibenefícios via Cielo (Visa/Elo PAT)
+      // Aparece em datas isoladas, valores pequenos; NÃO é Alelo
+      { frag: 'PAT BENEFICIO CREDITO',       prod: 'Multibenefícios Visa' },
       // ── Alelo ────────────────────────────────────────────────────────────
-      { frag: 'PAT BENEFICIO CREDITO',       prod: 'Alelo Refeicao' },
       { frag: 'RECEBIMENTO FORNECEDOR ALELO',prod: 'Alelo Refeicao' },
       // NAIP = processador de Alelo (vale alimentação PAT via NAIP)
       { frag: 'RECEBIMENTO FORNECEDOR NAIP', prod: 'Alelo Refeicao' },
@@ -1210,20 +1228,25 @@ function executar() {
       'Ticket Alimentacao':     'Ticket Restaurante',
       'Ticket Alimentação':     'Ticket Restaurante',
       'Ticket Flex':            'Ticket Restaurante',
-      // Sodexo: mesmo lote
-      'Sodexo Alimentacao':     'Sodexo Refeicao',
-      'Sodexo Alimentação':     'Sodexo Refeicao',
-      // Pluxee: TED-TRANSF PLUXEE cobre Alimentação e Refeição juntos
+      // Pluxee (antes Sodexo): TED-TRANSF PLUXEE cobre Alimentação e Refeição juntos
+      // IMPORTANTE: o TEF ainda gera 'Sodexo Refeicao'/'Sodexo Alimentacao' internamente
+      // mas o banco recebe como TED PLUXEE (empresa renomeou) → redirecionar aqui
+      'Sodexo Refeicao':        'Pluxee Alimentacao',
+      'Sodexo Alimentacao':     'Pluxee Alimentacao',
+      'Sodexo Refeição':        'Pluxee Alimentacao',
+      'Sodexo Alimentação':     'Pluxee Alimentacao',
       'Pluxee Refeição':        'Pluxee Alimentacao',
       'Pluxee Alimentação':     'Pluxee Alimentacao',
-      // FIX 1: Multibenef. Elo e Multibenef. Master → mesmo memo que Multibenef. Visa
-      // (o Bradesco usa "RECEBIMENTO FORNECEDOR CIELO" para todos os vouchers Cielo)
+      // Multibenef. Elo/Master → mesmo memo "RECEBIMENTO FORNECEDOR CIELO" que Visa
       'Multibenefícios Elo':    'Multibenefícios Visa',
       'Multibenefícios Master': 'Multibenefícios Visa',
-      // FIX 2: Visa Débito no TEF → chega como Visa Electron no banco
-      // (Bradesco registra débito Visa como "CARTAO VISA ELECTRON")
+      // Visa Débito no TEF → "CARTAO VISA ELECTRON" no banco (Bradesco)
       'Visa Débito':            'Visa Electron',
       'Visa Debito':            'Visa Electron',
+      // Visa Exterior → Bradesco não cria lote separado, entra em "VENDA CARTAO DE CREDITO"
+      'Visa Exterior':          'Visa',
+      'Master Exterior':        'Mastercard',
+      'Elo Exterior':           'ELO Credito',
     };
 
     function memoParaProd(memo) {
@@ -1285,20 +1308,36 @@ function executar() {
       var item = agenda[j];
       if (item.tipo === 'pix') continue;
       if (item.dep_date > HOJE) { item.status = 'futuro'; continue; }
+      // Depósito previsto já passou de hoje, mas a data cai depois do extrato carregado
+      // → ainda não aparece no banco pois o extrato não chegou até essa data
+      if (bankMaxDate && item.dep_date > bankMaxDate) { item.status = 'aguardando_deposito'; continue; }
+      // Novo status: depósito dentro do período histórico mas extrato não cobre essa data
+      // Ex: venda 28/02 com prazo 15 dias → dep_date 15/03, extrato até 10/03 → fora_extrato
+      if (bankMaxDate && item.dep_date > bankMaxDate) {
+        item.status = 'fora_extrato';
+        continue;
+      }
 
-      // Resolver alias (ex: Alelo Alimentação → busca como Alelo Refeicao no banco)
+      // Resolver alias (ex: Sodexo Refeicao → busca como Pluxee Alimentacao no banco)
       var prodBusca = PROD_ALIAS[item.produto] || item.produto;
 
-      // Janela: data exata de depósito + 1 dia útil de margem
+      // Janela de busca: data exata ± 3 dias corridos
+      // (cobre feriados, carnaval, variações de processamento de cada bandeira)
       var depYMD = item.dep_date.toISOString().split('T')[0].replace(/-/g,'');
-      var dep1   = addDiasUteis(item.dep_date, 1).toISOString().split('T')[0].replace(/-/g,'');
+      var janelaYMDs = [depYMD];
+      for (var _d = 1; _d <= 3; _d++) {
+        var _dm = new Date(item.dep_date); _dm.setDate(_dm.getDate() - _d);
+        var _dp = new Date(item.dep_date); _dp.setDate(_dp.getDate() + _d);
+        janelaYMDs.push(_dm.toISOString().split('T')[0].replace(/-/g,''));
+        janelaYMDs.push(_dp.toISOString().split('T')[0].replace(/-/g,''));
+      }
 
       var melhorChave = null, melhorDiff = 999999;
       var ehLoteComp = PRODUTOS_LOTE_COMPARTILHADO[prodBusca] || false;
       for (var ck in bankPorProdDia) {
         var partes = ck.split('|');
         if (partes[0] !== prodBusca) continue;
-        if (partes[1] !== depYMD && partes[1] !== dep1) continue;
+        if (janelaYMDs.indexOf(partes[1]) < 0) continue;
         var lote = bankPorProdDia[ck];
         // Para lotes compartilhados: não verifica 'usados' — o mesmo lote
         // bancário pode ser referenciado por múltiplos itens (Alim+Ref)
@@ -1441,8 +1480,13 @@ function renderResumo() {
 
   var pend = R.agenda.filter(function(a) { return a.status === 'pendente' || a.status === 'nao_encontrado'; });
   var pendVal = pend.reduce(function(s,a) { return s + a.liq_final; }, 0);
+  var foraExt = R.agenda.filter(function(a) { return a.status === 'fora_extrato'; });
+  var foraExtVal = foraExt.reduce(function(s,a) { return s + a.liq_final; }, 0);
   var ok = R.agenda.filter(function(a) { return a.status === 'conciliado'; }).length;
-  var past = R.agenda.filter(function(a) { return a.dep_date <= HOJE; }).length;
+  // 'past' = itens com dep_date dentro do extrato (excluir futuro e fora_extrato do denominador)
+  var past = R.agenda.filter(function(a) {
+    return a.dep_date <= HOJE && a.status !== 'fora_extrato' && a.status !== 'futuro' && a.tipo !== 'pix';
+  }).length;
   var pct = past ? Math.round(ok / past * 100) : 0;
 
   var subLiq = R.temCielo
@@ -1474,8 +1518,9 @@ function renderResumo() {
   document.getElementById('sumgrid').innerHTML =
     '<div class="sum-card gold"><div class="sum-lbl">Bruto TEF + Maquininha</div><div class="sum-val">' + fBRL(totB) + '</div><div class="sum-sub">' + subBruto + '</div></div>' +
     '<div class="sum-card green"><div class="sum-lbl">Líquido Cielo (antes aluguel)</div><div class="sum-val">' + fBRL(R.temCielo ? cieloL : totL) + '</div><div class="sum-sub">' + subLiq + '</div></div>' +
-    '<div class="sum-card blue"><div class="sum-lbl">Pendente / A Receber</div><div class="sum-val">' + fBRL(pendVal) + '</div><div class="sum-sub">' + pend.length + ' depósito(s)</div></div>' +
-    '<div class="sum-card orange"><div class="sum-lbl">Taxa de Conciliação</div><div class="sum-val">' + pct + '%</div><div class="sum-sub">' + ok + ' de ' + past + ' conferidos</div></div>' +
+    '<div class="sum-card blue"><div class="sum-lbl">Pendente / A Receber</div><div class="sum-val">' + fBRL(pendVal) + '</div><div class="sum-sub">' + pend.length + ' depósito(s) não encontrado(s)</div></div>' +
+    (foraExt.length ? '<div class="sum-card blue"><div class="sum-lbl">📂 Fora do extrato bancário</div><div class="sum-val">' + fBRL(foraExtVal) + '</div><div class="sum-sub">' + foraExt.length + ' depósito(s) após ' + (bankMaxDate ? bankMaxDate.toLocaleDateString('pt-BR') : '?') + '</div></div>' : '') +
+    '<div class="sum-card orange"><div class="sum-lbl">Taxa de Conciliação</div><div class="sum-val">' + pct + '%</div><div class="sum-sub">' + ok + ' de ' + past + ' conferidos (excl. fora extrato)</div></div>' +
     '<div class="sum-card" style="border-top:3px solid var(--red);grid-column:span 2"><div class="sum-lbl">Aluguel Equipamentos Cielo · ' + mesesPeriodo + ' mês(es) × R$' + fBRL(ALUGUEL_TOTAL_MES) + '/mês</div><div class="sum-val" style="color:var(--red)">−' + fBRL(aluguelPeriodo) + '</div><div class="sum-sub">7 equipamentos · abatido diretamente dos depósitos</div></div>' +
     '<div class="sum-card" style="border-top:3px solid var(--green);grid-column:span 2"><div class="sum-lbl">Líquido Real (após aluguel)</div><div class="sum-val" style="color:var(--green)">' + fBRL(liqReal) + '</div><div class="sum-sub">Valor efetivo que entra na conta</div></div>';
 }
@@ -1538,9 +1583,11 @@ function desenharAgenda() {
   items.forEach(function(it) {
     var md = it.bruto - it.liq;
     var isPeriAnt = it.status === 'periodo_anterior';
-    var rc = it.status === 'divergente' ? 'row-warn'
-           : it.status === 'nao_encontrado' ? 'row-bad'
-           : isPeriAnt ? 'row-pant'
+    var rc = it.status === 'divergente'          ? 'row-warn'
+           : it.status === 'nao_encontrado'      ? 'row-bad'
+           : isPeriAnt                           ? 'row-pant'
+           : it.status === 'fora_extrato'        ? 'row-fora'
+           : it.status === 'aguardando_deposito' ? 'row-agd'
            : '';
     var fonteTag = it.fonte === 'cielo'
       ? '<span style="background:#e8f5e9;color:#2e7d32;padding:2px 6px;border-radius:4px;font-size:10px;font-family:var(--mono)">CIELO</span>'
@@ -1569,12 +1616,16 @@ function desenharConcil() {
   var ok = past.filter(function(a){return a.status==='conciliado';}).length;
   var dv = past.filter(function(a){return a.status==='divergente';}).length;
   var nf = past.filter(function(a){return a.status==='nao_encontrado';}).length;
+  var fe = past.filter(function(a){return a.status==='fora_extrato';}).length;
+  var ag = past.filter(function(a){return a.status==='aguardando_deposito';}).length;
   document.getElementById('c2').textContent = past.length;
   var pa = past.filter(function(a){return a.status==='periodo_anterior';}).length;
   document.getElementById('strio').innerHTML =
     '<div class="sc"><div class="sc-v" style="color:var(--green)">'+ok+'</div><div class="sc-l">✅ Conciliados</div></div>' +
     '<div class="sc"><div class="sc-v" style="color:var(--orange)">'+dv+'</div><div class="sc-l">⚠️ Divergentes</div></div>' +
     '<div class="sc"><div class="sc-v" style="color:var(--red)">'+nf+'</div><div class="sc-l">❌ Não Encontrados</div></div>' +
+    (ag ? '<div class="sc"><div class="sc-v" style="color:#1976d2">'+ag+'</div><div class="sc-l">🕐 Aguardando extrato</div></div>' : '') +
+    (fe ? '<div class="sc"><div class="sc-v" style="color:#1565c0">'+fe+'</div><div class="sc-l">📂 Fora do extrato</div></div>' : '') +
     '<div class="sc"><div class="sc-v" style="color:var(--muted)">'+pa+'</div><div class="sc-l">⏮ Período anterior</div></div>';
   var fs = document.getElementById('ft-cst').value;
   var items = past.slice();
@@ -1591,9 +1642,11 @@ function desenharConcil() {
   var h = '<table><thead><tr><th>Bandeira</th><th>Tipo</th><th>Data da Venda</th><th>Data Prevista</th><th class="tr">Esperado</th><th>Status</th><th class="tr">Recebido</th><th>Data Banco</th><th class="tr">Diferença</th></tr></thead><tbody>';
   items.forEach(function(it) {
     var isPeriAnt = it.status === 'periodo_anterior';
-    var rc = it.status === 'divergente' ? 'row-warn'
-           : it.status === 'nao_encontrado' ? 'row-bad'
-           : isPeriAnt ? 'row-pant' : '';
+    var rc = it.status === 'divergente'          ? 'row-warn'
+           : it.status === 'nao_encontrado'      ? 'row-bad'
+           : it.status === 'aguardando_deposito' ? 'row-agd'
+           : it.status === 'fora_extrato'        ? 'row-fora'
+           : isPeriAnt                           ? 'row-pant' : '';
     var diff = it.diff;
     var dh = diff !== null
       ? '<span class="' + (Math.abs(diff)<0.05?'dok':Math.abs(diff)<2?'dwarn':'dbad') + '">' + (diff>=0?'+':'') + fBRL(diff) + '</span>'
@@ -1693,12 +1746,14 @@ function bTipo(t) {
 }
 function bSt(s) {
   var m = {
-    conciliado:       ['bg',  '✓ Conciliado'],
-    divergente:       ['bgo', '⚠ Divergente'],
-    nao_encontrado:   ['br',  '✗ Não encontrado no banco'],
-    pendente:         ['bb',  '⏳ Pendente'],
-    futuro:           ['bgr', '📅 Futuro'],
-    periodo_anterior: ['bgr', '⏮ Período anterior']
+    conciliado:           ['bg',  '✓ Conciliado'],
+    divergente:           ['bgo', '⚠ Divergente'],
+    nao_encontrado:       ['br',  '✗ Não encontrado no banco'],
+    pendente:             ['bb',  '⏳ Pendente'],
+    futuro:               ['bgr', '📅 Futuro'],
+    fora_extrato:         ['bb',  '📂 Fora do extrato'],
+    aguardando_deposito:  ['bb',  '🕐 Aguardando no extrato'],
+    periodo_anterior:     ['bgr', '⏮ Período anterior']
   };
   var r = m[s] || ['bgr', s];
   return '<span class="bdg ' + r[0] + '">' + r[1] + '</span>';
