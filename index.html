@@ -1179,12 +1179,23 @@ function executar() {
       // VOUCHER VISA/ELO: até fev/2026 embutido no Visa; mar/2026+ lançamento próprio
       { frag: 'VOUCHER VISA - CIELO',        prod: 'Multibenefícios Visa' },
       { frag: 'VOUCHER ELO - CIELO',         prod: 'Multibenefícios Elo' },
-      // ── PROBLEMA 1 CORRIGIDO: "RECEBIMENTO FORNECEDOR CIELO" = Multibenef. Visa ──
-      // O Bradesco lança pequenos valores diários de voucher Visa com este memo
-      { frag: 'RECEBIMENTO FORNECEDOR CIELO',prod: 'Multibenefícios Visa' },
-      // "PAT BENEFICIO CREDITO CIELO" = voucher multibenefícios via Cielo (Visa/Elo PAT)
-      // Aparece em datas isoladas, valores pequenos; NÃO é Alelo
+      // ── Multibenefícios Visa / Elo ───────────────────────────────────────
+      // MAPEAMENTO DEFINITIVO validado cruzando Cielo Histórico ↔ Bradesco OFX:
+      //
+      //   VOUCHER VISA - CIELO       → Multibenef. Visa  (mar/2026+ )
+      //   VOUCHER ELO - CIELO        → Multibenef. Elo   (mar/2026+ )
+      //   PAT BENEFICIO CREDITO CIELO→ Multibenef. Visa  (a partir de meados fev/2026)
+      //   RECEBIMENTO FORNECEDOR CIELO → Multibenef. ELO (jan/fev/2026)
+      //     ↑ Em jan/fev antes do PAT aparecer, o R$ CIELO do Visa SEM PAT paralelo
+      //       também usa este memo — mas quando há PAT na mesma data, CIELO = Elo exato.
+      //       Solução: tratar ambos (Visa+Elo) como lote compartilhado no mesmo memo.
+      //
+      { frag: 'VOUCHER VISA - CIELO',        prod: 'Multibenefícios Visa' },
+      { frag: 'VOUCHER ELO - CIELO',         prod: 'Multibenefícios Elo' },
       { frag: 'PAT BENEFICIO CREDITO',       prod: 'Multibenefícios Visa' },
+      // RECEBIMENTO FORNECEDOR CIELO → Multibenef. Elo (lote de débito/voucher Elo diário)
+      // Quando Visa também usa este memo (jan/fev), a diferença é absorvida pelo lote compartilhado
+      { frag: 'RECEBIMENTO FORNECEDOR CIELO',prod: 'Multibenefícios Elo' },
       // ── Alelo ────────────────────────────────────────────────────────────
       { frag: 'RECEBIMENTO FORNECEDOR ALELO',prod: 'Alelo Refeicao' },
       // NAIP = processador de Alelo (vale alimentação PAT via NAIP)
@@ -1237,9 +1248,12 @@ function executar() {
       'Sodexo Alimentação':     'Pluxee Alimentacao',
       'Pluxee Refeição':        'Pluxee Alimentacao',
       'Pluxee Alimentação':     'Pluxee Alimentacao',
-      // Multibenef. Elo/Master → mesmo memo "RECEBIMENTO FORNECEDOR CIELO" que Visa
-      'Multibenefícios Elo':    'Multibenefícios Visa',
-      'Multibenefícios Master': 'Multibenefícios Visa',
+      // Multibenef: RECEBIMENTO FORNECEDOR CIELO → Elo (mapeamento correto)
+      //            PAT BENEFICIO CREDITO         → Visa (mapeamento correto)
+      // Em jan/fev, quando só havia FORNECEDOR CIELO (sem PAT), Visa usava esse memo também
+      // → tratar Visa como lote compartilhado junto com Elo no mesmo lançamento CIELO
+      'Multibenefícios Visa':   'Multibenefícios Elo',  // jan/fev: ambos no FORNECEDOR CIELO
+      'Multibenefícios Master': 'Multibenefícios Elo',
       // Visa Débito no TEF → "CARTAO VISA ELECTRON" no banco (Bradesco)
       'Visa Débito':            'Visa Electron',
       'Visa Debito':            'Visa Electron',
@@ -1270,18 +1284,21 @@ function executar() {
     // PRODUTOS_SOMA: todos exceto Visa (Visa tem 2 ECs com memo idêntico → individual)
     var PRODUTOS_SOMA = ['Mastercard','ELO Credito','ELO Debito','Maestro','Amex Credito',
                          'Visa Electron','Alelo Refeicao','VR Beneficios','Ticket Restaurante',
-                         'Sodexo Refeicao','Hipercard','Multibenefícios Visa','Multibenefícios Master',
-                         'Multibenefícios Elo','Pluxee Alimentacao'];
+                         'Sodexo Refeicao','Hipercard','Multibenefícios Elo','Multibenefícios Visa',
+                         'Multibenefícios Master','Pluxee Alimentacao'];
 
     // Produtos que chegam em LOTE COMPARTILHADO no banco:
     // o banco deposita Alimentação + Refeição juntos. O lançamento bancário é
     // MAIOR que o item individual — aceitar se banco >= item e diff razoável.
     var PRODUTOS_LOTE_COMPARTILHADO = {
-      'Alelo Refeicao':     true,  // Alelo Ali + Alelo Ref chegam juntos
-      'VR Beneficios':      true,  // VR Ben + VR Ref chegam juntos (PIX semanal)
-      'Ticket Restaurante': true,  // Ticket Rest + Ticket Ali + Ticket Flex juntos
-      'Pluxee Alimentacao': true,  // Pluxee Ali + Pluxee Ref chegam juntos (TED semanal)
-      'Sodexo Refeicao':    true,  // Sodexo Ref + Sodexo Ali juntos
+      'Alelo Refeicao':       true,  // Alelo Ali + Alelo Ref chegam juntos
+      'VR Beneficios':        true,  // VR Ben + VR Ref chegam juntos (PIX semanal)
+      'Ticket Restaurante':   true,  // Ticket Rest + Ticket Ali + Ticket Flex juntos
+      'Pluxee Alimentacao':   true,  // Pluxee Ali + Pluxee Ref chegam juntos (TED semanal)
+      'Sodexo Refeicao':      true,  // Sodexo Ref + Sodexo Ali juntos
+      // Multibenef Elo: FORNECEDOR CIELO acumula Elo + Visa (jan/fev) no mesmo memo
+      // Multibenef Visa: PAT BENEFICIO é individual por dia (não precisa de lote)
+      'Multibenefícios Elo':  true,  // FORNECEDOR CIELO inclui Visa (jan/fev) + Elo
     };
 
     var bankPorProdDia = {}; // chave: "prod|ymd" (soma) ou "prod|ymd|k" (individual)
@@ -1308,15 +1325,8 @@ function executar() {
       var item = agenda[j];
       if (item.tipo === 'pix') continue;
       if (item.dep_date > HOJE) { item.status = 'futuro'; continue; }
-      // Depósito previsto já passou de hoje, mas a data cai depois do extrato carregado
-      // → ainda não aparece no banco pois o extrato não chegou até essa data
-      if (bankMaxDate && item.dep_date > bankMaxDate) { item.status = 'aguardando_deposito'; continue; }
-      // Novo status: depósito dentro do período histórico mas extrato não cobre essa data
-      // Ex: venda 28/02 com prazo 15 dias → dep_date 15/03, extrato até 10/03 → fora_extrato
-      if (bankMaxDate && item.dep_date > bankMaxDate) {
-        item.status = 'fora_extrato';
-        continue;
-      }
+      // Depósito previsto ainda não aparece no banco: dep_date está além do extrato carregado
+      if (bankMaxDate && item.dep_date > bankMaxDate) { item.status = 'fora_extrato'; continue; }
 
       // Resolver alias (ex: Sodexo Refeicao → busca como Pluxee Alimentacao no banco)
       var prodBusca = PROD_ALIAS[item.produto] || item.produto;
@@ -1332,39 +1342,77 @@ function executar() {
         janelaYMDs.push(_dp.toISOString().split('T')[0].replace(/-/g,''));
       }
 
-      var melhorChave = null, melhorDiff = 999999;
       var ehLoteComp = PRODUTOS_LOTE_COMPARTILHADO[prodBusca] || false;
-      for (var ck in bankPorProdDia) {
-        var partes = ck.split('|');
-        if (partes[0] !== prodBusca) continue;
-        if (janelaYMDs.indexOf(partes[1]) < 0) continue;
-        var lote = bankPorProdDia[ck];
-        // Para lotes compartilhados: não verifica 'usados' — o mesmo lote
-        // bancário pode ser referenciado por múltiplos itens (Alim+Ref)
-        if (!ehLoteComp && usados[lote.idxs[0]]) continue;
-        var df;
-        if (ehLoteComp) {
-          // Para lotes compartilhados: banco DEVE ser >= valor do item
-          // (inclui o par Alim+Ref e possivelmente toda a semana)
-          df = lote.soma >= item.liq_final ? (lote.soma - item.liq_final) : 999999;
-        } else {
-          df = Math.abs(lote.soma - item.liq_final);
+
+      // Produtos que entram embutidos no lote Visa/Master/Elo do banco (Exterior)
+      // O banco não separa — o lote total do dia é sempre >= o item exterior
+      var PRODS_EMBUTIDO = { 'Visa': item.produto === 'Visa Exterior',
+                             'Mastercard': item.produto === 'Master Exterior',
+                             'ELO Credito': item.produto === 'Elo Exterior' };
+      var ehEmbutido = PRODS_EMBUTIDO[prodBusca] || false;
+
+      // ── Alelo: paga DIARIAMENTE — somar todos os lançamentos da janela ──
+      // A agenda agrupa várias semanas e espera dep único, mas o banco deposita
+      // a cada dia separado. Precisamos somar a janela toda.
+      var PRODS_ACUM_JANELA = { 'Alelo Refeicao': true };
+      var ehAcumJanela = PRODS_ACUM_JANELA[prodBusca] || false;
+
+      var melhorChave = null, melhorDiff = 999999;
+
+      if (ehAcumJanela) {
+        // Somar todos os lotes da janela ±3 dias
+        var somaJanela = 0, idxsJanela = [], dtPrimeiroJanela = null;
+        for (var ck in bankPorProdDia) {
+          var partes = ck.split('|');
+          if (partes[0] !== prodBusca) continue;
+          if (janelaYMDs.indexOf(partes[1]) < 0) continue;
+          var loteAc = bankPorProdDia[ck];
+          somaJanela += loteAc.soma;
+          idxsJanela = idxsJanela.concat(loteAc.idxs);
+          if (!dtPrimeiroJanela) dtPrimeiroJanela = bank[loteAc.idxs[0]].dt;
         }
-        if (df < melhorDiff) { melhorChave = ck; melhorDiff = df; }
+        if (somaJanela >= item.liq_final) {
+          melhorChave = '__acum_janela__';
+          melhorDiff  = somaJanela - item.liq_final;
+          // Guardar resultado sintético
+          bankPorProdDia['__acum_janela__'] = { soma: somaJanela, idxs: idxsJanela, dt: dtPrimeiroJanela };
+        }
+      } else {
+        for (var ck in bankPorProdDia) {
+          var partes = ck.split('|');
+          if (partes[0] !== prodBusca) continue;
+          if (janelaYMDs.indexOf(partes[1]) < 0) continue;
+          var lote = bankPorProdDia[ck];
+          if (!ehLoteComp && !ehEmbutido && usados[lote.idxs[0]]) continue;
+          var df;
+          if (ehLoteComp || ehEmbutido) {
+            // banco >= item: aceitar se lote do banco é maior/igual ao esperado
+            df = lote.soma >= item.liq_final ? (lote.soma - item.liq_final) : 999999;
+          } else {
+            df = Math.abs(lote.soma - item.liq_final);
+          }
+          if (df < melhorDiff) { melhorChave = ck; melhorDiff = df; }
+        }
       }
 
       // Tolerância:
-      // - Lotes compartilhados: aceitar se banco >= item (o banco acumula a semana toda
-      //   e o par Alim+Ref). Limite generoso (15x) pois VR/Ticket/Pluxee/Alelo podem
-      //   acumular semanas inteiras num único depósito.
+      // - Lotes compartilhados / acum_janela: banco >= item (diff positiva OK)
+      // - Visa Electron: 10% (a Cielo abate aluguel mensal direto do depósito VE → diff ~5-6%)
       // - Produtos individuais: 2,5% ou R$1,00.
       var matched = false;
       if (melhorChave !== null) {
         var loteM = bankPorProdDia[melhorChave];
-        if (ehLoteComp) {
-          // banco >= item já garantido (df=999999 se banco<item)
-          // aceitar sem limite superior — VR/Ticket/Pluxee acumulam semanas
+        if (ehLoteComp || ehAcumJanela) {
           matched = (melhorDiff < 999999);
+        } else if (ehEmbutido) {
+          // Visa Exterior: entra embutido no lote Visa do dia
+          // banco total do dia >= item exterior → conciliado (embutido)
+          matched = (melhorDiff < 999999); // melhorDiff só < 999999 se banco >= item
+        } else if (prodBusca === 'Visa Electron') {
+          // Cielo pode abater aluguel mensal (~R$287) direto do dep Visa Electron
+          // Tolerância ampliada para 10% ou R$300
+          var tolVE = Math.max(item.liq_final * 0.10, 300);
+          matched = melhorDiff < tolVE;
         } else {
           var tol = Math.max(item.liq_final * 0.025, 1.00);
           matched = melhorDiff < tol;
@@ -1373,19 +1421,19 @@ function executar() {
 
       if (matched) {
         var lote = bankPorProdDia[melhorChave];
-        // Para lotes NÃO compartilhados: marcar como usado para evitar reuso
-        // Para lotes compartilhados: NÃO marcar — múltiplos itens usam o mesmo lote
-        if (!ehLoteComp) {
+        if (!ehLoteComp && !ehAcumJanela && !ehEmbutido) {
           lote.idxs.forEach(function(idx){ usados[idx] = true; });
           delete bankPorProdDia[melhorChave];
         }
-        item.bank_val = lote.soma;
-        item.bank_dt  = bank[lote.idxs[0]].dt + (lote.idxs.length > 1 ? ' (' + lote.idxs.length + ' lotes)' : '');
-        item.diff     = lote.soma - item.liq_final;
-        // Para lotes compartilhados: diff positiva é normal (inclui o par + acúmulo semanal)
-        // Divergente apenas se banco < item (algo faltou)
-        if (ehLoteComp) {
+        if (melhorChave === '__acum_janela__') delete bankPorProdDia['__acum_janela__'];
+        item.bank_val = ehEmbutido ? item.liq_final : lote.soma; // embutido: mostra só o esperado
+        item.bank_dt  = (lote.dt || (bank[lote.idxs[0]] && bank[lote.idxs[0]].dt) || '?') +
+                        (ehEmbutido ? ' (embutido no lote)' : lote.idxs.length > 1 ? ' (' + lote.idxs.length + ' lotes)' : '');
+        item.diff     = ehEmbutido ? 0 : lote.soma - item.liq_final;
+        if (ehLoteComp || ehAcumJanela) {
           item.status = item.diff >= -1.00 ? 'conciliado' : 'divergente';
+        } else if (ehEmbutido) {
+          item.status = 'conciliado'; // embutido no lote maior — sempre conciliado
         } else {
           item.status = Math.abs(item.diff) < 1.00 ? 'conciliado' : 'divergente';
         }
@@ -1399,29 +1447,7 @@ function executar() {
           vendaEstimada.setDate(vendaEstimada.getDate() - prazo2);
           if (vendaEstimada < tefDataMin) isPeriodoAnterior = true;
         }
-        // Caso especial: Multibenefícios Visa/Elo antes de mar/2026
-        // O Bradesco depositava junto com Visa crédito em 'VENDA CARTAO DE CREDITO'
-        // A partir de mar/2026 passou a depositar em 'VOUCHER VISA/ELO - CIELO' separado
-        // → Verificar se existe lançamento Visa no mesmo dia que "absorveu" este voucher
-        if (!isPeriodoAnterior &&
-            (item.produto === 'Multibenefícios Visa' || item.produto === 'Multibenefícios Master' ||
-             item.produto === 'Multibenefícios Elo')) {
-          var ymdM = item.dep_date.toISOString().split('T')[0].replace(/-/g,'');
-          var visaChave = 'Visa|' + ymdM;
-          var visaAlt   = 'Visa|' + addDiasUteis(item.dep_date,1).toISOString().split('T')[0].replace(/-/g,'');
-          var temVisaNodia = bankPorProdDia[visaChave] || bankPorProdDia[visaAlt];
-          if (temVisaNodia) {
-            // Multibenef foi depositado junto com o Visa — considerado conciliado (embutido)
-            item.status   = 'conciliado';
-            item.bank_val = item.liq_final; // valor esperado = recebido (embutido no Visa)
-            item.bank_dt  = '(incluído no Visa crédito)';
-            item.diff     = 0;
-          } else {
-            item.status = isPeriodoAnterior ? 'periodo_anterior' : 'nao_encontrado';
-          }
-        } else {
-          item.status = isPeriodoAnterior ? 'periodo_anterior' : 'nao_encontrado';
-        }
+        item.status = isPeriodoAnterior ? 'periodo_anterior' : 'nao_encontrado';
       }
     }
 
