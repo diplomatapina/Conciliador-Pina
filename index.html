@@ -320,18 +320,23 @@ var TAXAS = {
   // PAT (3.6%, 15d diário) não distinguível no TEF — tratado como Auxílio
   'Sodexo Refeicao':    {taxa:0.0580, tipo:'voucher_sodexo', tarifa_dep:11.27, prazo:29, regra:'corte_seg'},
   'Sodexo Alimentacao': {taxa:0.0580, tipo:'voucher_sodexo', tarifa_dep:11.27, prazo:29, regra:'corte_seg'},
-  'VR Beneficios':      {taxa:0.0630, tipo:'voucher_vr',    tarifa_dep:6.51,  prazo:28, regra:'corte_seg'},
-  'VR Refeicao':        {taxa:0.0630, tipo:'voucher_vr',    tarifa_dep:6.51,  prazo:28, regra:'corte_seg'},
+  // VR: pagamento QUINZENAL — banco deposita a cada 14 dias (sempre segunda)
+  // Validado com extrato real: 12/01, 26/01, 09/02, 23/02 (intervalo de 14 dias)
+  // corte_seg + prazo 14 dias → dep sempre na segunda 14 dias após corte
+  // Obs: o 1º lote do ano inclui vendas de dez/nov (diff positivo esperado)
+  'VR Beneficios':      {taxa:0.0630, tipo:'voucher_vr',    tarifa_dep:6.51,  prazo:14, regra:'corte_seg'},
+  'VR Refeicao':        {taxa:0.0630, tipo:'voucher_vr',    tarifa_dep:6.51,  prazo:14, regra:'corte_seg'},
   // VR PAT (Refeição PAT / Alimentação PAT) — taxa 3,60%, prazo 15 dias, corte dia 9 do mês
   // No TEF pode aparecer como produto separado; por ora mapeado igual VR não-PAT no banco
   'VR Refeicao PAT':    {taxa:0.0360, tipo:'voucher_vr',    tarifa_dep:0.00,  prazo:15, regra:'corridos'},
   'VR Alimentacao PAT': {taxa:0.0360, tipo:'voucher_vr',    tarifa_dep:0.00,  prazo:15, regra:'corridos'},
-  // Ticket: corte DOMINGO, lote Seg→Dom, prazo 29 dias do domingo → depósito sempre segunda
-  // Identificado por análise reversa extrato jan-mar/2026. Desconto efetivo ~13%
-  // (taxa 6% + possível anuidade mensal — confirmar com Ticket a tarifa por depósito)
-  'Ticket Restaurante': {taxa:0.0600, tipo:'voucher_ticket', prazo:29, regra:'corte_dom'},
-  'Ticket Alimentacao': {taxa:0.0600, tipo:'voucher_ticket', prazo:29, regra:'corte_dom'},
-  'Ticket Flex':        {taxa:0.0580, tipo:'voucher_ticket', prazo:29, regra:'corte_dom'},
+  // Ticket: pagamento QUINZENAL — banco deposita a cada 14 dias (sempre segunda)
+  // Validado com extrato real: 12/01, 26/01, 09/02, 23/02 (intervalo de 14 dias)
+  // corte_dom (domingo) + prazo 14 dias → dep na segunda ~14 dias após corte
+  // Obs: o 1º lote do ano inclui vendas de dez/nov (diff positivo esperado)
+  'Ticket Restaurante': {taxa:0.0600, tipo:'voucher_ticket', prazo:14, regra:'corte_dom'},
+  'Ticket Alimentacao': {taxa:0.0600, tipo:'voucher_ticket', prazo:14, regra:'corte_dom'},
+  'Ticket Flex':        {taxa:0.0580, tipo:'voucher_ticket', prazo:14, regra:'corte_dom'},
   'Pix':                    {taxa:0.0000, tipo:'pix',            prazo:0,  regra:'mesmo_dia'},
   'Multibenefícios Visa':   {taxa:0.0360, tipo:'credito_vista', prazo:15, regra:'corridos',
     historico: [{ate: '2026-01-31', taxa:0.0500, prazo:30}]},
@@ -1019,10 +1024,12 @@ function executar() {
       var ymd = it.dep_date.getFullYear() + ('0'+(it.dep_date.getMonth()+1)).slice(-2) + ('0'+it.dep_date.getDate()).slice(-2);
       var rk  = it.produto + '|' + ymd;
       var liqRec = temRec ? recMap[rk] : null;
-      // Aluguel só sobre Visa crédito
-      var alugRec = (temRec && (it.produto === 'Visa' || it.produto === 'Visa Electron')) ? (recAluguel[ymd] || 0) : 0;
+      // Aluguel de máquina e ajustes a débito aparecem como SAÍDAS SEPARADAS no banco
+      // (linhas "Saidas" no Recebíveis Calendário) — NÃO são descontados do depósito Visa.
+      // Portanto liq_final = liqRec (valor bruto do depósito que o banco efetivamente credita).
+      // O aluguel fica registrado em recAluguel para exibição no resumo financeiro.
       var liqFinal = liqRec !== undefined && liqRec !== null
-        ? liqRec + alugRec          // valor real do recebíveis + aluguel abatido
+        ? liqRec                    // valor real do depósito conforme Recebíveis
         : it.liq - it.tarifa_dep;   // fallback: cálculo normal
       return Object.assign({}, it, {
         liq_final: liqFinal,
@@ -1084,52 +1091,33 @@ function executar() {
       pixTefPorDia[ymd] = (pixTefPorDia[ymd] || 0) + ptx.valor;
     }
 
-    // Montar mapa banco PIX: ymd → {soma, idxs}
-    // Fins de semana: lançamento aparece na segunda com acumulado
-    var pixBancoPorDia = {};
-    for (var k = 0; k < bank.length; k++) {
-      if (usados[k]) continue;
-      var b = bank[k];
-      var mu = (b.memo || '').toUpperCase();
-      if (mu.indexOf('PIX QR CODE') < 0) continue;
-      if (b.valor <= 0) continue;
-      var ymd = b.date.toISOString().split('T')[0].replace(/-/g,'');
-      if (!pixBancoPorDia[ymd]) pixBancoPorDia[ymd] = { soma: 0, idxs: [], dt: b.dt };
-      pixBancoPorDia[ymd].soma += b.valor;
-      pixBancoPorDia[ymd].idxs.push(k);
-    }
-
-    // Conciliar cada item PIX da agenda
+    // ── PIX Cielo: embutido no lote Visa ("VENDA CARTAO DE CREDITO") ──────────
+    // O PIX processado pela Cielo (maquininha) é depositado D+0 dentro do
+    // mesmo lote "VENDA CARTAO DE CREDITO" que o Visa Crédito normal.
+    // NÃO existe lançamento separado "CIELO PIX" no banco Bradesco.
+    //
+    // Os "PIX QR CODE" no banco são pagamentos DIRETOS dos clientes via Pix
+    // para a conta da padaria — fluxo independente, não intermediado pela Cielo.
+    //
+    // Portanto: itens Pix da agenda Cielo são marcados como embutidos (aceitos),
+    // e NÃO conciliamos os "PIX QR CODE" do banco contra a agenda Cielo.
+    // ── PIX Cielo: embutido no lote Visa do mesmo dia ──────────────────────
+    // O PIX processado pela Cielo (maquininha) vai junto no lote "VENDA CARTAO DE CREDITO".
+    // NÃO tem lançamento separado no banco para PIX Cielo.
+    // Os lançamentos "PIX QR CODE" no banco são PIX DIRETOS dos clientes (não Cielo).
+    // → Resultado: o item PIX da agenda Cielo é marcado como embutido no Visa.
+    //   bank_val = null (não há lançamento próprio); diff = null; status = embutido.
+    //   NUNCA forçar bank_val = liq_final pois isso mostraria diff=0 erroneamente.
     for (var j = 0; j < agenda.length; j++) {
       var item = agenda[j];
       if (item.tipo !== 'pix') continue;
       if (item.dep_date > HOJE) { item.status = 'futuro'; continue; }
-
-      var ymd = item.dep_date.toISOString().split('T')[0].replace(/-/g,'');
-
-      // Para segunda-feira: buscar no banco da segunda (que acumula sab+dom+seg)
-      // Para outros dias úteis: buscar no banco do próprio dia
-      var bEntry = pixBancoPorDia[ymd];
-
-      if (bEntry && !bEntry.usado) {
-        bEntry.usado = true;
-        bEntry.idxs.forEach(function(idx){ usados[idx] = true; });
-        item.bank_val = bEntry.soma;
-        item.bank_dt  = bEntry.dt + (bEntry.idxs.length > 1 ? ' (' + bEntry.idxs.length + ' lçtos)' : '');
-        item.diff     = bEntry.soma - item.liq_final;
-        // PIX: banco PODE ter mais que o TEF (PIX via app não registrado no TEF)
-        // Considerar conciliado se banco ≥ TEF com diferença razoável (até 3x o TEF)
-        // Divergente somente se banco for MENOR que o TEF (algo está faltando)
-        if (item.diff >= -1.00) {
-          item.status = 'conciliado'; // banco ≥ TEF = OK (excesso = PIX não-TEF)
-        } else {
-          item.status = 'divergente'; // banco < TEF = problema real
-        }
-      } else {
-        var isPeriodoAnterior = false;
-        if (tefDataMin && item.data_venda_min && item.data_venda_min < tefDataMin) isPeriodoAnterior = true;
-        item.status = isPeriodoAnterior ? 'periodo_anterior' : 'nao_encontrado';
-      }
+      if (bankMaxDate && item.dep_date > bankMaxDate) { item.status = 'fora_extrato'; continue; }
+      // PIX Cielo: embutido no lote Visa (sem lançamento próprio no banco)
+      item.status   = 'pix_embutido';
+      item.bank_val = null;   // sem lançamento próprio
+      item.bank_dt  = item.dt_dep + ' (embutido Visa)';
+      item.diff     = null;   // não aplicável
     }
 
     // ── 5b. Conciliar Cielo por modalidade ─────────────────
@@ -1248,12 +1236,11 @@ function executar() {
       'Sodexo Alimentação':     'Pluxee Alimentacao',
       'Pluxee Refeição':        'Pluxee Alimentacao',
       'Pluxee Alimentação':     'Pluxee Alimentacao',
-      // Multibenef: RECEBIMENTO FORNECEDOR CIELO → Elo (mapeamento correto)
-      //            PAT BENEFICIO CREDITO         → Visa (mapeamento correto)
-      // Em jan/fev, quando só havia FORNECEDOR CIELO (sem PAT), Visa usava esse memo também
-      // → tratar Visa como lote compartilhado junto com Elo no mesmo lançamento CIELO
-      'Multibenefícios Visa':   'Multibenefícios Elo',  // jan/fev: ambos no FORNECEDOR CIELO
-      'Multibenefícios Master': 'Multibenefícios Elo',
+      // Multibenef: cada produto busca seu próprio lote bancário
+      //   'Multibenefícios Visa' → PAT BENEFICIO CREDITO (banco)
+      //   'Multibenefícios Elo'  → RECEBIMENTO FORNECEDOR CIELO (banco)
+      // Em jan/fev (antes do PAT BENEFICIO existir), Visa também chegava via FORNECEDOR CIELO
+      // → nesse período Visa tenta PAT (não encontra) e cai no fallback de lote compartilhado Elo
       // Visa Débito no TEF → "CARTAO VISA ELECTRON" no banco (Bradesco)
       'Visa Débito':            'Visa Electron',
       'Visa Debito':            'Visa Electron',
@@ -1331,11 +1318,16 @@ function executar() {
       // Resolver alias (ex: Sodexo Refeicao → busca como Pluxee Alimentacao no banco)
       var prodBusca = PROD_ALIAS[item.produto] || item.produto;
 
-      // Janela de busca: data exata ± 3 dias corridos
-      // (cobre feriados, carnaval, variações de processamento de cada bandeira)
+      // Vouchers de pagamento quinzenal (VR, Ticket, Pluxee) têm variação maior
+      // de ±7 dias porque o banco consolida em blocos de ~14 dias.
+      // Outros produtos usam janela padrão ±3 dias.
+      var PRODS_JANELA7 = { 'VR Beneficios':true, 'Ticket Restaurante':true, 'Pluxee Alimentacao':true, 'Sodexo Refeicao':true };
+      var janelaRaio = PRODS_JANELA7[prodBusca] ? 7 : 3;
+
+      // Janela de busca: data exata ± janelaRaio dias corridos
       var depYMD = item.dep_date.toISOString().split('T')[0].replace(/-/g,'');
       var janelaYMDs = [depYMD];
-      for (var _d = 1; _d <= 3; _d++) {
+      for (var _d = 1; _d <= janelaRaio; _d++) {
         var _dm = new Date(item.dep_date); _dm.setDate(_dm.getDate() - _d);
         var _dp = new Date(item.dep_date); _dp.setDate(_dp.getDate() + _d);
         janelaYMDs.push(_dm.toISOString().split('T')[0].replace(/-/g,''));
@@ -1345,17 +1337,30 @@ function executar() {
       var ehLoteComp = PRODUTOS_LOTE_COMPARTILHADO[prodBusca] || false;
 
       // Produtos que entram embutidos no lote Visa/Master/Elo do banco (Exterior)
-      // O banco não separa — o lote total do dia é sempre >= o item exterior
       var PRODS_EMBUTIDO = { 'Visa': item.produto === 'Visa Exterior',
                              'Mastercard': item.produto === 'Master Exterior',
                              'ELO Credito': item.produto === 'Elo Exterior' };
       var ehEmbutido = PRODS_EMBUTIDO[prodBusca] || false;
 
       // ── Alelo: paga DIARIAMENTE — somar todos os lançamentos da janela ──
-      // A agenda agrupa várias semanas e espera dep único, mas o banco deposita
-      // a cada dia separado. Precisamos somar a janela toda.
       var PRODS_ACUM_JANELA = { 'Alelo Refeicao': true };
       var ehAcumJanela = PRODS_ACUM_JANELA[prodBusca] || false;
+
+      // ── Cielo acumula sexta+FDS na segunda seguinte ──────────────────────
+      // Produtos Cielo D+1: se dep_date é sexta (ou quinta antes de feriado),
+      // o banco JUNTA todos os dias até a próxima segunda num único lançamento.
+      // Ex: dep_date 06/03 (sexta) e dep_date 09/03 (segunda) → banco tem só 09/03
+      // com a SOMA dos dois. Cada item bate com o mesmo lote maior → banco >= item.
+      // Produtos com este padrão (depósito D+1 pela Cielo):
+      var PRODS_CIELO_D1 = {
+        'Visa Electron':true,'Maestro':true,'ELO Debito':true,
+        'Mastercard':true,'ELO Credito':true,'Amex Credito':true,'Visa':true
+      };
+      // Se dep_date é sexta (5) ou há 3+ dias até o próximo banco disponível → modo lote
+      var depDiaSem = item.dep_date.getDay(); // 0=dom 1=seg ... 5=sex 6=sab
+      var ehDepSexta = (depDiaSem === 5) && PRODS_CIELO_D1[prodBusca];
+      // Também cobre quinta quando feriado empurra para segunda (+4 dias)
+      var ehDepQuintaFeriado = (depDiaSem === 4) && PRODS_CIELO_D1[prodBusca];
 
       var melhorChave = null, melhorDiff = 999999;
 
@@ -1386,33 +1391,58 @@ function executar() {
           if (!ehLoteComp && !ehEmbutido && usados[lote.idxs[0]]) continue;
           var df;
           if (ehLoteComp || ehEmbutido) {
-            // banco >= item: aceitar se lote do banco é maior/igual ao esperado
             df = lote.soma >= item.liq_final ? (lote.soma - item.liq_final) : 999999;
           } else {
             df = Math.abs(lote.soma - item.liq_final);
           }
           if (df < melhorDiff) { melhorChave = ck; melhorDiff = df; }
         }
+
+        // ── Busca acumulada sexta/quinta→segunda (Cielo D+1 acumula FDS) ──────
+        // Se ainda não encontrou dentro da tolerância normal E é produto Cielo D+1
+        // com dep na sexta (ou quinta de feriado), tentar lote da segunda seguinte.
+        // O banco deposita sexta+sábado+domingo juntos na segunda → lote >= item esperado.
+        if (PRODS_CIELO_D1[prodBusca] && (ehDepSexta || ehDepQuintaFeriado)) {
+          // Montar janela até a próxima segunda (+4 dias da sexta, +5 da quinta)
+          var diasFwd = ehDepSexta ? [3,4] : [4,5];
+          var janelaSegYMDs = [];
+          for (var _fi = 0; _fi < diasFwd.length; _fi++) {
+            var _fwd = new Date(item.dep_date); _fwd.setDate(_fwd.getDate() + diasFwd[_fi]);
+            janelaSegYMDs.push(_fwd.toISOString().split('T')[0].replace(/-/g,''));
+          }
+          for (var ck2 in bankPorProdDia) {
+            var p2 = ck2.split('|');
+            if (p2[0] !== prodBusca) continue;
+            if (janelaSegYMDs.indexOf(p2[1]) < 0) continue;
+            var lote2 = bankPorProdDia[ck2];
+            // Lote da segunda deve ser MAIOR que o item (inclui outros dias também)
+            if (lote2.soma < item.liq_final) continue;
+            var df2 = lote2.soma - item.liq_final; // sempre positivo
+            if (df2 < melhorDiff) { melhorChave = ck2; melhorDiff = df2; }
+          }
+        }
       }
 
       // Tolerância:
       // - Lotes compartilhados / acum_janela: banco >= item (diff positiva OK)
-      // - Visa Electron: 10% (a Cielo abate aluguel mensal direto do depósito VE → diff ~5-6%)
-      // - Produtos individuais: 2,5% ou R$1,00.
+      // - Embutido (Exterior): banco >= item (item dentro do lote maior)
+      // - Sexta→segunda (lote acumulado): banco >= item (inclui dias do FDS)
+      // - Produtos individuais: 2,5% ou R$1,00
+      // Nota: Visa Electron não precisa mais de tolerância especial — o aluguel
+      // é saída separada no banco e NÃO é subtraído do liq_final.
       var matched = false;
+      var ehLoteSegunda = false; // flag para status descritivo
       if (melhorChave !== null) {
         var loteM = bankPorProdDia[melhorChave];
+        var loteYMD = melhorChave.split('|')[1];
+        // Detectar se o match foi no lote da segunda (não na dep_date original)
+        ehLoteSegunda = (loteYMD !== depYMD) && PRODS_CIELO_D1[prodBusca] &&
+                        (ehDepSexta || ehDepQuintaFeriado);
         if (ehLoteComp || ehAcumJanela) {
           matched = (melhorDiff < 999999);
-        } else if (ehEmbutido) {
-          // Visa Exterior: entra embutido no lote Visa do dia
-          // banco total do dia >= item exterior → conciliado (embutido)
-          matched = (melhorDiff < 999999); // melhorDiff só < 999999 se banco >= item
-        } else if (prodBusca === 'Visa Electron') {
-          // Cielo pode abater aluguel mensal (~R$287) direto do dep Visa Electron
-          // Tolerância ampliada para 10% ou R$300
-          var tolVE = Math.max(item.liq_final * 0.10, 300);
-          matched = melhorDiff < tolVE;
+        } else if (ehEmbutido || ehLoteSegunda || PRODS_CIELO_D1[prodBusca]) {
+          // banco >= item: lote pode incluir outros dias (FDS, sexta) → diff positiva OK
+          matched = (melhorDiff < 999999);
         } else {
           var tol = Math.max(item.liq_final * 0.025, 1.00);
           matched = melhorDiff < tol;
@@ -1421,19 +1451,24 @@ function executar() {
 
       if (matched) {
         var lote = bankPorProdDia[melhorChave];
-        if (!ehLoteComp && !ehAcumJanela && !ehEmbutido) {
+        // CIELO D+1: sexta e segunda usam o mesmo lote acumulado → NUNCA consumir
+        var ehCieloD1Prod = !!PRODS_CIELO_D1[prodBusca];
+        if (!ehLoteComp && !ehAcumJanela && !ehEmbutido && !ehLoteSegunda && !ehCieloD1Prod) {
           lote.idxs.forEach(function(idx){ usados[idx] = true; });
           delete bankPorProdDia[melhorChave];
         }
         if (melhorChave === '__acum_janela__') delete bankPorProdDia['__acum_janela__'];
-        item.bank_val = ehEmbutido ? item.liq_final : lote.soma; // embutido: mostra só o esperado
-        item.bank_dt  = (lote.dt || (bank[lote.idxs[0]] && bank[lote.idxs[0]].dt) || '?') +
-                        (ehEmbutido ? ' (embutido no lote)' : lote.idxs.length > 1 ? ' (' + lote.idxs.length + ' lotes)' : '');
+        item.bank_val = ehEmbutido ? item.liq_final : lote.soma;
+        var dtLabel = lote.dt || (bank[lote.idxs[0]] && bank[lote.idxs[0]].dt) || '?';
+        var notaLote = ehEmbutido    ? ' (embutido no lote)'
+                     : ehLoteSegunda ? ' (lote acum. seg)'
+                     : lote.idxs.length > 1 ? ' (' + lote.idxs.length + ' lotes)' : '';
+        item.bank_dt  = dtLabel + notaLote;
         item.diff     = ehEmbutido ? 0 : lote.soma - item.liq_final;
-        if (ehLoteComp || ehAcumJanela) {
+        if (ehLoteComp || ehAcumJanela || ehLoteSegunda || PRODS_CIELO_D1[prodBusca]) {
           item.status = item.diff >= -1.00 ? 'conciliado' : 'divergente';
         } else if (ehEmbutido) {
-          item.status = 'conciliado'; // embutido no lote maior — sempre conciliado
+          item.status = 'conciliado';
         } else {
           item.status = Math.abs(item.diff) < 1.00 ? 'conciliado' : 'divergente';
         }
@@ -1508,10 +1543,10 @@ function renderResumo() {
   var pendVal = pend.reduce(function(s,a) { return s + a.liq_final; }, 0);
   var foraExt = R.agenda.filter(function(a) { return a.status === 'fora_extrato'; });
   var foraExtVal = foraExt.reduce(function(s,a) { return s + a.liq_final; }, 0);
-  var ok = R.agenda.filter(function(a) { return a.status === 'conciliado'; }).length;
-  // 'past' = itens com dep_date dentro do extrato (excluir futuro e fora_extrato do denominador)
+  var ok = R.agenda.filter(function(a) { return a.status === 'conciliado' || a.status === 'pix_embutido'; }).length;
+  // 'past' = itens com dep_date dentro do extrato (excluir futuro, fora_extrato e pix_embutido do denominador)
   var past = R.agenda.filter(function(a) {
-    return a.dep_date <= HOJE && a.status !== 'fora_extrato' && a.status !== 'futuro' && a.tipo !== 'pix';
+    return a.dep_date <= HOJE && a.status !== 'fora_extrato' && a.status !== 'futuro' && a.status !== 'pix_embutido' && a.tipo !== 'pix';
   }).length;
   var pct = past ? Math.round(ok / past * 100) : 0;
 
@@ -1638,7 +1673,7 @@ function desenharAgenda() {
 function desenharConcil() {
   if (!APP.resultado) return;
   var R = APP.resultado;
-  var past = R.agenda.filter(function(a) { return a.dep_date <= HOJE; });
+  var past = R.agenda.filter(function(a) { return a.dep_date <= HOJE && a.status !== 'pix_embutido'; });
   var ok = past.filter(function(a){return a.status==='conciliado';}).length;
   var dv = past.filter(function(a){return a.status==='divergente';}).length;
   var nf = past.filter(function(a){return a.status==='nao_encontrado';}).length;
@@ -1779,7 +1814,8 @@ function bSt(s) {
     futuro:               ['bgr', '📅 Futuro'],
     fora_extrato:         ['bb',  '📂 Fora do extrato'],
     aguardando_deposito:  ['bb',  '🕐 Aguardando no extrato'],
-    periodo_anterior:     ['bgr', '⏮ Período anterior']
+    periodo_anterior:     ['bgr', '⏮ Período anterior'],
+    pix_embutido:         ['bg',  '✓ PIX (embutido Visa)']
   };
   var r = m[s] || ['bgr', s];
   return '<span class="bdg ' + r[0] + '">' + r[1] + '</span>';
