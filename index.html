@@ -1145,46 +1145,70 @@ function executar() {
     //    com tolerância de +1 dia útil para margem operacional.
 
     var MEMO_PROD_MAP = [
-      { frag: 'VDA DEBITO MASTER',           prod: 'Maestro' },
+      // ── Cielo débito ────────────────────────────────────────────────────
       { frag: 'CIELO VDA DEBITO MASTER',     prod: 'Maestro' },
-      { frag: 'VDA DEBITO ELO',              prod: 'ELO Debito' },
+      { frag: 'VDA DEBITO MASTER',           prod: 'Maestro' },
       { frag: 'CIELO VDA DEBITO ELO',        prod: 'ELO Debito' },
-      { frag: 'VOUCHER ELO - CIELO',         prod: 'ELO Debito' },
+      { frag: 'VDA DEBITO ELO',              prod: 'ELO Debito' },
+      // ── Cielo crédito ───────────────────────────────────────────────────
+      { frag: 'CIELO VDA CREDITO MASTER',    prod: 'Mastercard' },
+      { frag: 'VDA CREDITO MASTER',          prod: 'Mastercard' },
+      { frag: 'CIELO VDA CREDITO ELO',       prod: 'ELO Credito' },
+      { frag: 'VDA CREDITO ELO',             prod: 'ELO Credito' },
+      { frag: 'VENDA CARTAO DE CREDITO',     prod: 'Visa' },        // SOMENTE Visa crédito
+      { frag: 'CIELO AMEX',                  prod: 'Amex Credito' },
+      // ── Visa Electron / Multibenefícios ─────────────────────────────────
       { frag: 'CARTAO VISA ELECTRON',        prod: 'Visa Electron' },
       { frag: 'VISA ELECTRON',               prod: 'Visa Electron' },
-      { frag: 'VOUCHER VISA - CIELO',        prod: 'Visa Electron' },
-      { frag: 'VDA CREDITO MASTER',          prod: 'Mastercard' },
-      { frag: 'CIELO VDA CREDITO MASTER',    prod: 'Mastercard' },
-      { frag: 'VDA CREDITO ELO',             prod: 'ELO Credito' },
-      { frag: 'CIELO VDA CREDITO ELO',       prod: 'ELO Credito' },
-      { frag: 'VENDA CARTAO DE CREDITO',     prod: 'Visa' },        // SOMENTE Visa
-      { frag: 'CIELO AMEX',                  prod: 'Amex Credito' },
-      { frag: 'VOUCHER VISA - CIELO',          prod: 'Multibenefícios Visa' },  // a partir mar/2026: separado
-      { frag: 'VOUCHER ELO - CIELO',           prod: 'Multibenefícios Elo' },   // a partir mar/2026: separado
+      // VOUCHER VISA/ELO: até fev/2026 embutido no Visa; mar/2026+ lançamento próprio
+      { frag: 'VOUCHER VISA - CIELO',        prod: 'Multibenefícios Visa' },
+      { frag: 'VOUCHER ELO - CIELO',         prod: 'Multibenefícios Elo' },
+      // ── PROBLEMA 1 CORRIGIDO: "RECEBIMENTO FORNECEDOR CIELO" = Multibenef. Visa ──
+      // O Bradesco lança pequenos valores diários de voucher Visa com este memo
+      { frag: 'RECEBIMENTO FORNECEDOR CIELO',prod: 'Multibenefícios Visa' },
+      // ── Alelo ────────────────────────────────────────────────────────────
       { frag: 'PAT BENEFICIO CREDITO',       prod: 'Alelo Refeicao' },
       { frag: 'RECEBIMENTO FORNECEDOR ALELO',prod: 'Alelo Refeicao' },
+      // NAIP = processador de Alelo (vale alimentação PAT via NAIP)
+      { frag: 'RECEBIMENTO FORNECEDOR NAIP', prod: 'Alelo Refeicao' },
+      { frag: 'NAIP',                        prod: 'Alelo Refeicao' },
+      // ── Ticket ───────────────────────────────────────────────────────────
       { frag: 'RECEBIMENTO FORNECEDOR TICKET',prod:'Ticket Restaurante' },
       { frag: 'TED-TRANSF ELET DISPON REMET.TICKET', prod: 'Ticket Restaurante' },
-      { frag: 'TED-TRANSF ELET DISPON',      prod: 'Ticket Restaurante' }, // fallback
+      // ── PROBLEMA 2 CORRIGIDO: Pluxee paga via TED semanal (não é Ticket) ──
+      // Pluxee Alimentação e Pluxee Refeição chegam juntos como "TED-TRANSF...PLUXEE"
+      // O banco não separa por produto — conciliamos o lote total vs soma dos dois
+      { frag: 'TED-TRANSF ELET DISPON REMET.PLUXEE', prod: 'Pluxee Alimentacao' },
+      { frag: 'PLUXEE B. B. S. A',           prod: 'Pluxee Alimentacao' }, // grafia mar/2026
+      { frag: 'PLUXEE',                      prod: 'Pluxee Alimentacao' }, // fallback geral
+      // ── VR ──────────────────────────────────────────────────────────────
+      // PROBLEMA 3 CORRIGIDO: VR paga via PIX semanal às segundas/quintas
+      // O memo real é "TRANSFERENCIA PIX REM: VR BenefIcios Serv Pr"
+      // Letra 'I' maiúscula em "BenefIcios" → comparar em uppercase resolve
+      { frag: 'TRANSFERENCIA PIX REM: VR BEN', prod: 'VR Beneficios' },
+      { frag: 'TRANSFERENCIA PIX REM: VR BEF', prod: 'VR Beneficios' },
+      { frag: 'PIX REM: VR BENEF',           prod: 'VR Beneficios' },
       { frag: 'RECEBIMENTO FORNECEDOR SMARTNET', prod: 'VR Beneficios' },
       { frag: 'SMARTNET',                    prod: 'VR Beneficios' },
       { frag: 'VR BENEFICIO',                prod: 'VR Beneficios' },
-      { frag: 'TRANSFERENCIA PIX REM: VR BEN', prod: 'VR Beneficios' },  // VR paga via TED/PIX semanal
-      { frag: 'TRANSFERENCIA PIX REM: VR BEF', prod: 'VR Beneficios' },  // variação de grafia
-      { frag: 'TRANSFERENCIA PIX REM: VR BEN', prod: 'VR Beneficios' },
+      // ── Sodexo ───────────────────────────────────────────────────────────
       { frag: 'SODEXO',                      prod: 'Sodexo Refeicao' },
-      { frag: 'PLUXEE',                      prod: 'Sodexo Refeicao' },
-      { frag: 'TICKET',                      prod: 'Ticket Restaurante' },
+      // ── Outros ───────────────────────────────────────────────────────────
       { frag: 'HIPERCARD',                   prod: 'Hipercard' },
+      { frag: 'TICKET',                      prod: 'Ticket Restaurante' }, // fallback genérico
     ];
 
-    // Produtos que compartilham o mesmo memo no banco (Alelo Refeicao = Alelo Alimentação etc.)
+    // Produtos que compartilham o mesmo memo no banco → alias para busca
+    // PROBLEMA 4 CORRIGIDO: Pluxee Refeição deve apontar para Pluxee Alimentacao
+    // (ambos chegam no mesmo lote TED-TRANSF PLUXEE — conciliamos o total junto)
     var PROD_ALIAS = {
-      'Alelo Alimentação': 'Alelo Refeicao',
-      'VR Refeicao':       'VR Beneficios',
-      'Ticket Alimentacao':'Ticket Restaurante',
-      'Ticket Flex':       'Ticket Restaurante',
-      'Sodexo Alimentacao':'Sodexo Refeicao',
+      'Alelo Alimentação':  'Alelo Refeicao',     // mesmo lote RECEB FORNECEDOR ALELO
+      'VR Refeicao':        'VR Beneficios',       // mesmo PIX semanal VR
+      'Ticket Alimentacao': 'Ticket Restaurante',  // mesmo lote RECEB FORNECEDOR TICKET
+      'Ticket Flex':        'Ticket Restaurante',  // mesmo lote RECEB FORNECEDOR TICKET
+      'Sodexo Alimentacao': 'Sodexo Refeicao',     // mesmo lote SODEXO
+      'Pluxee Refeição':    'Pluxee Alimentacao',  // mesmo lote TED-TRANSF PLUXEE
+      'Pluxee Alimentação': 'Pluxee Alimentacao',  // normalizar acento
     };
 
     function memoParaProd(memo) {
@@ -1205,11 +1229,22 @@ function executar() {
     //   Visa → INDIVIDUAL (existem 2 ECs distintos com memo idêntico "VENDA CARTAO DE CREDITO")
     //   → NÃO somar, buscar o mais próximo individualmente
     //
-    // PRODUTOS_SOMA: todos exceto Visa
+    // PRODUTOS_SOMA: todos exceto Visa (Visa tem 2 ECs com memo idêntico → individual)
     var PRODUTOS_SOMA = ['Mastercard','ELO Credito','ELO Debito','Maestro','Amex Credito',
                          'Visa Electron','Alelo Refeicao','VR Beneficios','Ticket Restaurante',
                          'Sodexo Refeicao','Hipercard','Multibenefícios Visa','Multibenefícios Master',
-                         'Multibenefícios Elo'];
+                         'Multibenefícios Elo','Pluxee Alimentacao'];
+
+    // Produtos que chegam em LOTE COMPARTILHADO no banco:
+    // o banco deposita Alimentação + Refeição juntos. O lançamento bancário é
+    // MAIOR que o item individual — aceitar se banco >= item e diff razoável.
+    var PRODUTOS_LOTE_COMPARTILHADO = {
+      'Alelo Refeicao':     true,  // Alelo Ali + Alelo Ref chegam juntos
+      'VR Beneficios':      true,  // VR Ben + VR Ref chegam juntos (PIX semanal)
+      'Ticket Restaurante': true,  // Ticket Rest + Ticket Ali + Ticket Flex juntos
+      'Pluxee Alimentacao': true,  // Pluxee Ali + Pluxee Ref chegam juntos (TED semanal)
+      'Sodexo Refeicao':    true,  // Sodexo Ref + Sodexo Ali juntos
+    };
 
     var bankPorProdDia = {}; // chave: "prod|ymd" (soma) ou "prod|ymd|k" (individual)
     for (var k = 0; k < bank.length; k++) {
@@ -1244,25 +1279,54 @@ function executar() {
       var dep1   = addDiasUteis(item.dep_date, 1).toISOString().split('T')[0].replace(/-/g,'');
 
       var melhorChave = null, melhorDiff = 999999;
+      var ehLoteComp = PRODUTOS_LOTE_COMPARTILHADO[prodBusca] || false;
       for (var ck in bankPorProdDia) {
         var partes = ck.split('|');
         if (partes[0] !== prodBusca) continue;
         if (partes[1] !== depYMD && partes[1] !== dep1) continue;
         var lote = bankPorProdDia[ck];
         if (usados[lote.idxs[0]]) continue;
-        var df = Math.abs(lote.soma - item.liq_final);
+        var df;
+        if (ehLoteComp) {
+          // Para lotes compartilhados: banco DEVE ser >= valor do item
+          // (inclui o par Alim+Ref). Penalizar se banco < item.
+          df = lote.soma >= item.liq_final ? (lote.soma - item.liq_final) : 999999;
+        } else {
+          df = Math.abs(lote.soma - item.liq_final);
+        }
         if (df < melhorDiff) { melhorChave = ck; melhorDiff = df; }
       }
 
-      var tol = Math.max(item.liq_final * 0.025, 1.00); // tolerância 2,5% ou R$1,00
-      if (melhorChave !== null && melhorDiff < tol) {
+      // Tolerância: para lotes compartilhados o banco inclui o par (Ali+Ref),
+      // então aceitamos se banco >= item (diff positiva ilimitada) e banco <= 3× item.
+      // Para produtos individuais: 2,5% ou R$1,00.
+      var matched = false;
+      if (melhorChave !== null) {
+        var loteM = bankPorProdDia[melhorChave];
+        if (ehLoteComp) {
+          // banco >= item já garantido no cálculo acima (df=999999 se banco<item)
+          // aceitar se banco não ultrapassa 3× o esperado (evita falso positivo)
+          matched = (melhorDiff < 999999) && (loteM.soma <= item.liq_final * 3.5);
+        } else {
+          var tol = Math.max(item.liq_final * 0.025, 1.00);
+          matched = melhorDiff < tol;
+        }
+      }
+
+      if (matched) {
         var lote = bankPorProdDia[melhorChave];
         lote.idxs.forEach(function(idx){ usados[idx] = true; });
         delete bankPorProdDia[melhorChave];
         item.bank_val = lote.soma;
         item.bank_dt  = bank[lote.idxs[0]].dt + (lote.idxs.length > 1 ? ' (' + lote.idxs.length + ' lotes)' : '');
         item.diff     = lote.soma - item.liq_final;
-        item.status   = Math.abs(item.diff) < 1.00 ? 'conciliado' : 'divergente';
+        // Para lotes compartilhados: diff positiva é normal (inclui o par) → conciliado
+        // Divergente apenas se banco < item (algo faltou)
+        if (ehLoteComp) {
+          item.status = item.diff >= -1.00 ? 'conciliado' : 'divergente';
+        } else {
+          item.status = Math.abs(item.diff) < 1.00 ? 'conciliado' : 'divergente';
+        }
       } else {
         // Detectar se a venda que gerou este depósito provavelmente ocorreu antes do período importado
         var isPeriodoAnterior = false;
