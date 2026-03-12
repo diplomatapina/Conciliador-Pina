@@ -951,7 +951,7 @@ function executar() {
     // 2b. Construir agenda
     var am = {};
 
-    if (temCielo) {
+    if (temCielo || temRec) {
       // ── PRIORIDADE: Recebíveis Calendário ─────────────────────────────────
       // O Recebíveis usa datas REAIS de depósito (quando o banco creditou),
       // enquanto o Cielo Histórico usa datas PREVISTAS (estimativas do sistema).
@@ -965,6 +965,7 @@ function executar() {
         // Construir agenda a partir do Recebíveis (data + valor real)
         for (var i = 0; i < APP.recTxs.length; i++) {
           var rx = APP.recTxs[i];
+          if (!rx || !rx.produto) continue; // guard defensivo
           if (rx.produto === '_aluguel') continue; // saída separada — não é item de agenda
           if (rx.produto === 'Pix') continue; // Pix é conciliado 1:1 individualmente (seção 4)
           if (VOUCHER_LOCAIS.indexOf(rx.produto) >= 0) continue; // vouchers vêm do TEF
@@ -974,37 +975,41 @@ function executar() {
           if (!am[key]) am[key] = {
             produto: rx.produto, dep_date: depDate,
             bruto: 0, liq: 0, count: rx.liq > 0 ? 1 : 0,
-            tarifa_dep: cfg.tarifa_dep || 0, tipo: cfg.tipo,
+            tarifa_dep: cfg.tarifa_dep || 0, tipo: cfg.tipo || 'outros',
             fonte: 'rec',
             data_venda_min: depDate, data_venda_max: depDate
           };
           am[key].liq += rx.liq;
         }
         // Enriquecer com datas de venda do Cielo Histórico (para exibir "Venda 02/01 a 04/01")
-        for (var i = 0; i < cieloFiltrada.length; i++) {
-          var cx = cieloFiltrada[i];
-          if (VOUCHER_LOCAIS.indexOf(cx.produto) >= 0) continue;
-          var depDate = proximoDiaUtil(cx.date_dep);
-          var key = cx.produto + '_' + depDate.toISOString().split('T')[0];
-          if (am[key]) {
-            // Atualizar intervalo de datas de venda para exibição
-            if (cx.date_venda < am[key].data_venda_min) am[key].data_venda_min = cx.date_venda;
-            if (cx.date_venda > am[key].data_venda_max) am[key].data_venda_max = cx.date_venda;
-            am[key].bruto += cx.bruto;
-            am[key].count++;
+        if (temCielo) {
+          for (var i = 0; i < cieloFiltrada.length; i++) {
+            var cx = cieloFiltrada[i];
+            if (!cx || !cx.produto) continue;
+            if (VOUCHER_LOCAIS.indexOf(cx.produto) >= 0) continue;
+            var depDate = proximoDiaUtil(cx.date_dep);
+            var key = cx.produto + '_' + depDate.toISOString().split('T')[0];
+            if (am[key]) {
+              // Atualizar intervalo de datas de venda para exibição
+              if (cx.date_venda < am[key].data_venda_min) am[key].data_venda_min = cx.date_venda;
+              if (cx.date_venda > am[key].data_venda_max) am[key].data_venda_max = cx.date_venda;
+              am[key].bruto += cx.bruto;
+              am[key].count++;
+            }
           }
         }
-      } else {
+      } else if (temCielo) {
         // Sem Recebíveis: usar Cielo Histórico com datas previstas
         for (var i = 0; i < cieloFiltrada.length; i++) {
           var cx = cieloFiltrada[i];
+          if (!cx || !cx.produto) continue;
           var cfg = getTaxa(cx.produto, cx.date_venda) || { taxa: 0, tipo: 'outros', tarifa_dep: 0 };
           var depDate = proximoDiaUtil(cx.date_dep);
           var key = cx.produto + '_' + depDate.toISOString().split('T')[0];
           if (!am[key]) am[key] = {
             produto: cx.produto, dep_date: depDate,
             bruto: 0, liq: 0, count: 0,
-            tarifa_dep: cfg.tarifa_dep || 0, tipo: cfg.tipo,
+            tarifa_dep: cfg.tarifa_dep || 0, tipo: cfg.tipo || 'outros',
             fonte: 'cielo',
             data_venda_min: cx.date_venda, data_venda_max: cx.date_venda
           };
@@ -1018,13 +1023,14 @@ function executar() {
       // Vouchers locais (VR, Ticket, Alelo, Pluxee) → sempre calculados pelo TEF
       for (var i = 0; i < tefMais.length; i++) {
         var tx = tefMais[i];
+        if (!tx || !tx.produto) continue;
         if (VOUCHER_LOCAIS.indexOf(tx.produto) < 0) continue;
         var cfg = getTaxa(tx.produto, tx.date) || { taxa: 0, tipo: 'voucher', tarifa_dep: 0 };
         var liq = tx.valor * (1 - cfg.taxa);
         var dd = calcDeposito(tx.date, tx.produto);
         if (!dd) continue;
         var key = tx.produto + '_' + dd.toISOString().split('T')[0];
-        if (!am[key]) am[key] = { produto: tx.produto, dep_date: dd, bruto: 0, liq: 0, count: 0, tarifa_dep: cfg.tarifa_dep || 0, tipo: cfg.tipo, fonte: 'tef',
+        if (!am[key]) am[key] = { produto: tx.produto, dep_date: dd, bruto: 0, liq: 0, count: 0, tarifa_dep: cfg.tarifa_dep || 0, tipo: cfg.tipo || 'voucher', fonte: 'tef',
           data_venda_min: tx.date, data_venda_max: tx.date };
         am[key].bruto += tx.valor;
         am[key].liq   += liq;
@@ -1033,15 +1039,16 @@ function executar() {
         if (tx.date > am[key].data_venda_max) am[key].data_venda_max = tx.date;
       }
     } else {
-      // Sem Cielo: tudo calculado pelo TEF+POS
+      // Sem Cielo nem Recebíveis: tudo calculado pelo TEF+POS
       for (var i = 0; i < tefMais.length; i++) {
         var tx = tefMais[i];
+        if (!tx || !tx.produto) continue;
         var cfg = getTaxa(tx.produto, tx.date) || { taxa: 0, tipo: 'outros', tarifa_dep: 0 };
         var liq = tx.valor * (1 - cfg.taxa);
         var dd = calcDeposito(tx.date, tx.produto);
         if (!dd) continue;
         var key = tx.produto + '_' + dd.toISOString().split('T')[0];
-        if (!am[key]) am[key] = { produto: tx.produto, dep_date: dd, bruto: 0, liq: 0, count: 0, tarifa_dep: cfg.tarifa_dep || 0, tipo: cfg.tipo, fonte: 'tef',
+        if (!am[key]) am[key] = { produto: tx.produto, dep_date: dd, bruto: 0, liq: 0, count: 0, tarifa_dep: cfg.tarifa_dep || 0, tipo: cfg.tipo || 'outros', fonte: 'tef',
           data_venda_min: tx.date, data_venda_max: tx.date };
         am[key].bruto += tx.valor;
         am[key].liq   += liq;
@@ -1063,8 +1070,13 @@ function executar() {
     var agenda = Object.values(am).map(function(it) {
       var liqFinal;
       if (it.fonte === 'rec') {
-        // Agenda construída diretamente do Recebíveis: liq já é o valor real do depósito
-        liqFinal = it.liq;
+        // Agenda construída diretamente do Recebíveis: liq já é o valor real do depósito.
+        // EXCEÇÃO: Visa Crédito — Cielo desconta aluguel mensal diretamente do depósito (dia 5).
+        // Confirmado no OFX: banco recebe liqRec - aluguel para 'Visa' crédito.
+        // Para 'Visa Electron' (débito), o banco deposita o valor cheio.
+        var depYmdFix = it.dep_date.getFullYear() + ('0'+(it.dep_date.getMonth()+1)).slice(-2) + ('0'+it.dep_date.getDate()).slice(-2);
+        var alugCorr = (it.produto === 'Visa') ? (recAluguel[depYmdFix] || 0) : 0;
+        liqFinal = it.liq + alugCorr; // alugCorr é negativo → subtrai do Visa crédito
       } else {
         // Fallback: agenda do Cielo histórico ou TEF
         liqFinal = it.liq - it.tarifa_dep;
@@ -1280,8 +1292,9 @@ function executar() {
       'Pluxee Alimentação':     'Pluxee Alimentacao',
       // Multibenef: em jan/fev o banco usa "RECEBIMENTO FORNECEDOR CIELO" para ambos Visa e Elo.
       // A partir de meados fev, Visa passa a usar "PAT BENEFICIO CREDITO" separado.
-      // Para jan/fev: Multibenef Visa busca pelo alias Elo (mesmo lote compartilhado)
-      'Multibenefícios Visa':   'Multibenefícios Elo',
+      // CORRETO: NÃO redirecionar via alias — o bankPorProdDia já indexa o mesmo lançamento
+      // para ambos os produtos (via memoParaTodosProds). Com PRODUTOS_LOTE_COMPARTILHADO,
+      // o lote não é consumido → Visa e Elo encontram seu lote independentemente.
       // Visa Débito no TEF → "CARTAO VISA ELECTRON" no banco (Bradesco)
       'Visa Débito':            'Visa Electron',
       'Visa Debito':            'Visa Electron',
@@ -1378,6 +1391,14 @@ function executar() {
       // Resolver alias (ex: Sodexo Refeicao → busca como Pluxee Alimentacao no banco)
       var prodBusca = PROD_ALIAS[item.produto] || item.produto;
 
+      // ── Cielo acumula sexta+FDS na segunda seguinte ──────────────────────
+      // Produtos Cielo D+1: se dep_date é sexta (ou quinta antes de feriado),
+      // o banco JUNTA todos os dias até a próxima segunda num único lançamento.
+      var PRODS_CIELO_D1 = {
+        'Visa Electron':true,'Maestro':true,'ELO Debito':true,
+        'Mastercard':true,'ELO Credito':true,'Amex Credito':true,'Visa':true
+      };
+
       // Vouchers de pagamento quinzenal (VR, Ticket, Pluxee) têm variação maior
       // de ±7 dias porque o banco consolida em blocos de ~14 dias.
       // Produtos Cielo D+1 buscam SOMENTE para frente (0 a +3) — nunca retroativo,
@@ -1414,17 +1435,7 @@ function executar() {
       var PRODS_ACUM_JANELA = { 'Alelo Refeicao': true };
       var ehAcumJanela = PRODS_ACUM_JANELA[prodBusca] || false;
 
-      // ── Cielo acumula sexta+FDS na segunda seguinte ──────────────────────
-      // Produtos Cielo D+1: se dep_date é sexta (ou quinta antes de feriado),
-      // o banco JUNTA todos os dias até a próxima segunda num único lançamento.
-      // Ex: dep_date 06/03 (sexta) e dep_date 09/03 (segunda) → banco tem só 09/03
-      // com a SOMA dos dois. Cada item bate com o mesmo lote maior → banco >= item.
-      // Produtos com este padrão (depósito D+1 pela Cielo):
-      var PRODS_CIELO_D1 = {
-        'Visa Electron':true,'Maestro':true,'ELO Debito':true,
-        'Mastercard':true,'ELO Credito':true,'Amex Credito':true,'Visa':true
-      };
-      // Se dep_date é sexta (5) ou há 3+ dias até o próximo banco disponível → modo lote
+      // ── Se dep_date é sexta (5) ou quinta antes de feriado → modo lote acumulado ──
       var depDiaSem = item.dep_date.getDay(); // 0=dom 1=seg ... 5=sex 6=sab
       var ehDepSexta = (depDiaSem === 5) && PRODS_CIELO_D1[prodBusca];
       // Também cobre quinta quando feriado empurra para segunda (+4 dias)
@@ -1508,10 +1519,11 @@ function executar() {
                         (ehDepSexta || ehDepQuintaFeriado);
         if (ehLoteComp || ehAcumJanela) {
           matched = (melhorDiff < 999999);
-        } else if (ehEmbutido || ehLoteSegunda || PRODS_CIELO_D1[prodBusca]) {
-          // banco >= item: lote pode incluir outros dias (FDS, sexta) → diff positiva OK
+        } else if (ehEmbutido || ehLoteSegunda) {
+          // banco >= item: lote acumulado (embutido ou sexta→segunda) → diff positiva OK
           matched = (melhorDiff < 999999);
         } else {
+          // Produtos D+1 individuais (Elo Crédito, Mastercard, etc.): tolerância normal
           var tol = Math.max(item.liq_final * 0.025, 1.00);
           matched = melhorDiff < tol;
         }
@@ -1519,9 +1531,10 @@ function executar() {
 
       if (matched) {
         var lote = bankPorProdDia[melhorChave];
-        // CIELO D+1: sexta e segunda usam o mesmo lote acumulado → NUNCA consumir
-        var ehCieloD1Prod = !!PRODS_CIELO_D1[prodBusca];
-        if (!ehLoteComp && !ehAcumJanela && !ehEmbutido && !ehLoteSegunda && !ehCieloD1Prod) {
+        // Só NÃO consome o lote quando é acumulado (lote compartilhado, acum_janela, embutido,
+        // ou lote de segunda acumulando sexta+FDS). Para produtos D+1 em dias normais
+        // (seg-qui), o lote deve ser consumido normalmente para não ser reutilizado.
+        if (!ehLoteComp && !ehAcumJanela && !ehEmbutido && !ehLoteSegunda) {
           lote.idxs.forEach(function(idx){ usados[idx] = true; });
           delete bankPorProdDia[melhorChave];
         }
@@ -1533,7 +1546,8 @@ function executar() {
                      : lote.idxs.length > 1 ? ' (' + lote.idxs.length + ' lotes)' : '';
         item.bank_dt  = dtLabel + notaLote;
         item.diff     = ehEmbutido ? 0 : lote.soma - item.liq_final;
-        if (ehLoteComp || ehAcumJanela || ehLoteSegunda || PRODS_CIELO_D1[prodBusca]) {
+        if (ehLoteComp || ehAcumJanela || ehLoteSegunda) {
+          // Lote acumulado: banco pode ser >= item → conciliado se diff >= -1
           item.status = item.diff >= -1.00 ? 'conciliado' : 'divergente';
         } else if (ehEmbutido) {
           item.status = 'conciliado';
