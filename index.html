@@ -1199,16 +1199,31 @@ function executar() {
     ];
 
     // Produtos que compartilham o mesmo memo no banco → alias para busca
-    // PROBLEMA 4 CORRIGIDO: Pluxee Refeição deve apontar para Pluxee Alimentacao
-    // (ambos chegam no mesmo lote TED-TRANSF PLUXEE — conciliamos o total junto)
     var PROD_ALIAS = {
-      'Alelo Alimentação':  'Alelo Refeicao',     // mesmo lote RECEB FORNECEDOR ALELO
-      'VR Refeicao':        'VR Beneficios',       // mesmo PIX semanal VR
-      'Ticket Alimentacao': 'Ticket Restaurante',  // mesmo lote RECEB FORNECEDOR TICKET
-      'Ticket Flex':        'Ticket Restaurante',  // mesmo lote RECEB FORNECEDOR TICKET
-      'Sodexo Alimentacao': 'Sodexo Refeicao',     // mesmo lote SODEXO
-      'Pluxee Refeição':    'Pluxee Alimentacao',  // mesmo lote TED-TRANSF PLUXEE
-      'Pluxee Alimentação': 'Pluxee Alimentacao',  // normalizar acento
+      // Alelo: RECEB FORNECEDOR ALELO cobre tanto Refeição quanto Alimentação
+      'Alelo Alimentação':      'Alelo Refeicao',
+      'Alelo Alimentacao':      'Alelo Refeicao',
+      // VR: PIX semanal VR cobre tanto VR Beneficios quanto VR Refeicao
+      'VR Refeicao':            'VR Beneficios',
+      'VR Refeição':            'VR Beneficios',
+      // Ticket: RECEB FORNECEDOR TICKET cobre Restaurante, Alimentacao e Flex
+      'Ticket Alimentacao':     'Ticket Restaurante',
+      'Ticket Alimentação':     'Ticket Restaurante',
+      'Ticket Flex':            'Ticket Restaurante',
+      // Sodexo: mesmo lote
+      'Sodexo Alimentacao':     'Sodexo Refeicao',
+      'Sodexo Alimentação':     'Sodexo Refeicao',
+      // Pluxee: TED-TRANSF PLUXEE cobre Alimentação e Refeição juntos
+      'Pluxee Refeição':        'Pluxee Alimentacao',
+      'Pluxee Alimentação':     'Pluxee Alimentacao',
+      // FIX 1: Multibenef. Elo e Multibenef. Master → mesmo memo que Multibenef. Visa
+      // (o Bradesco usa "RECEBIMENTO FORNECEDOR CIELO" para todos os vouchers Cielo)
+      'Multibenefícios Elo':    'Multibenefícios Visa',
+      'Multibenefícios Master': 'Multibenefícios Visa',
+      // FIX 2: Visa Débito no TEF → chega como Visa Electron no banco
+      // (Bradesco registra débito Visa como "CARTAO VISA ELECTRON")
+      'Visa Débito':            'Visa Electron',
+      'Visa Debito':            'Visa Electron',
     };
 
     function memoParaProd(memo) {
@@ -1285,11 +1300,13 @@ function executar() {
         if (partes[0] !== prodBusca) continue;
         if (partes[1] !== depYMD && partes[1] !== dep1) continue;
         var lote = bankPorProdDia[ck];
-        if (usados[lote.idxs[0]]) continue;
+        // Para lotes compartilhados: não verifica 'usados' — o mesmo lote
+        // bancário pode ser referenciado por múltiplos itens (Alim+Ref)
+        if (!ehLoteComp && usados[lote.idxs[0]]) continue;
         var df;
         if (ehLoteComp) {
           // Para lotes compartilhados: banco DEVE ser >= valor do item
-          // (inclui o par Alim+Ref). Penalizar se banco < item.
+          // (inclui o par Alim+Ref e possivelmente toda a semana)
           df = lote.soma >= item.liq_final ? (lote.soma - item.liq_final) : 999999;
         } else {
           df = Math.abs(lote.soma - item.liq_final);
@@ -1297,16 +1314,18 @@ function executar() {
         if (df < melhorDiff) { melhorChave = ck; melhorDiff = df; }
       }
 
-      // Tolerância: para lotes compartilhados o banco inclui o par (Ali+Ref),
-      // então aceitamos se banco >= item (diff positiva ilimitada) e banco <= 3× item.
-      // Para produtos individuais: 2,5% ou R$1,00.
+      // Tolerância:
+      // - Lotes compartilhados: aceitar se banco >= item (o banco acumula a semana toda
+      //   e o par Alim+Ref). Limite generoso (15x) pois VR/Ticket/Pluxee/Alelo podem
+      //   acumular semanas inteiras num único depósito.
+      // - Produtos individuais: 2,5% ou R$1,00.
       var matched = false;
       if (melhorChave !== null) {
         var loteM = bankPorProdDia[melhorChave];
         if (ehLoteComp) {
-          // banco >= item já garantido no cálculo acima (df=999999 se banco<item)
-          // aceitar se banco não ultrapassa 3× o esperado (evita falso positivo)
-          matched = (melhorDiff < 999999) && (loteM.soma <= item.liq_final * 3.5);
+          // banco >= item já garantido (df=999999 se banco<item)
+          // aceitar sem limite superior — VR/Ticket/Pluxee acumulam semanas
+          matched = (melhorDiff < 999999);
         } else {
           var tol = Math.max(item.liq_final * 0.025, 1.00);
           matched = melhorDiff < tol;
@@ -1315,12 +1334,16 @@ function executar() {
 
       if (matched) {
         var lote = bankPorProdDia[melhorChave];
-        lote.idxs.forEach(function(idx){ usados[idx] = true; });
-        delete bankPorProdDia[melhorChave];
+        // Para lotes NÃO compartilhados: marcar como usado para evitar reuso
+        // Para lotes compartilhados: NÃO marcar — múltiplos itens usam o mesmo lote
+        if (!ehLoteComp) {
+          lote.idxs.forEach(function(idx){ usados[idx] = true; });
+          delete bankPorProdDia[melhorChave];
+        }
         item.bank_val = lote.soma;
         item.bank_dt  = bank[lote.idxs[0]].dt + (lote.idxs.length > 1 ? ' (' + lote.idxs.length + ' lotes)' : '');
         item.diff     = lote.soma - item.liq_final;
-        // Para lotes compartilhados: diff positiva é normal (inclui o par) → conciliado
+        // Para lotes compartilhados: diff positiva é normal (inclui o par + acúmulo semanal)
         // Divergente apenas se banco < item (algo faltou)
         if (ehLoteComp) {
           item.status = item.diff >= -1.00 ? 'conciliado' : 'divergente';
