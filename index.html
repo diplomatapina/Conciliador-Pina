@@ -310,17 +310,22 @@ var TAXAS = {
     historico: [{ate: '2026-02-06', taxa:0.0705, prazo:30}]},
   'Alelo Alimentação':  {taxa:0.0360, tipo:'voucher', prazo:15, regra:'corridos',
     historico: [{ate: '2026-02-06', taxa:0.0705, prazo:30}]},
-  'Sodexo Refeicao':    {taxa:0.0580, tipo:'voucher_sodexo', tarifa_dep:11.30, prazo:29, regra:'corte_seg'},
-  'Sodexo Alimentacao': {taxa:0.0580, tipo:'voucher_sodexo', tarifa_dep:11.30, prazo:29, regra:'corte_seg'},
+  // Sodexo/Pluxee Auxílio: 5.8%, corte Segunda, prazo 29d, tarifa R$11.27/dep, anuidade R$268.25/ano
+  // PAT (3.6%, 15d diário) não distinguível no TEF — tratado como Auxílio
+  'Sodexo Refeicao':    {taxa:0.0580, tipo:'voucher_sodexo', tarifa_dep:11.27, prazo:29, regra:'corte_seg'},
+  'Sodexo Alimentacao': {taxa:0.0580, tipo:'voucher_sodexo', tarifa_dep:11.27, prazo:29, regra:'corte_seg'},
   'VR Beneficios':      {taxa:0.0630, tipo:'voucher_vr',    tarifa_dep:6.51,  prazo:28, regra:'corte_seg'},
   'VR Refeicao':        {taxa:0.0630, tipo:'voucher_vr',    tarifa_dep:6.51,  prazo:28, regra:'corte_seg'},
   // VR PAT (Refeição PAT / Alimentação PAT) — taxa 3,60%, prazo 15 dias, corte dia 9 do mês
   // No TEF pode aparecer como produto separado; por ora mapeado igual VR não-PAT no banco
   'VR Refeicao PAT':    {taxa:0.0360, tipo:'voucher_vr',    tarifa_dep:0.00,  prazo:15, regra:'corridos'},
   'VR Alimentacao PAT': {taxa:0.0360, tipo:'voucher_vr',    tarifa_dep:0.00,  prazo:15, regra:'corridos'},
-  'Ticket Restaurante': {taxa:0.0600, tipo:'voucher_ticket', prazo:27, regra:'corte_ter'},
-  'Ticket Alimentacao': {taxa:0.0600, tipo:'voucher_ticket', prazo:27, regra:'corte_ter'},
-  'Ticket Flex':        {taxa:0.0580, tipo:'voucher_ticket', prazo:27, regra:'corte_ter'},
+  // Ticket: corte DOMINGO, lote Seg→Dom, prazo 29 dias do domingo → depósito sempre segunda
+  // Identificado por análise reversa extrato jan-mar/2026. Desconto efetivo ~13%
+  // (taxa 6% + possível anuidade mensal — confirmar com Ticket a tarifa por depósito)
+  'Ticket Restaurante': {taxa:0.0600, tipo:'voucher_ticket', prazo:29, regra:'corte_dom'},
+  'Ticket Alimentacao': {taxa:0.0600, tipo:'voucher_ticket', prazo:29, regra:'corte_dom'},
+  'Ticket Flex':        {taxa:0.0580, tipo:'voucher_ticket', prazo:29, regra:'corte_dom'},
   'Pix':                    {taxa:0.0000, tipo:'pix',            prazo:0,  regra:'mesmo_dia'},
   'Multibenefícios Visa':   {taxa:0.0360, tipo:'credito_vista', prazo:15, regra:'corridos',
     historico: [{ate: '2026-01-31', taxa:0.0500, prazo:30}]},
@@ -382,6 +387,10 @@ var ALUGUEL_TOTAL_MES = 287.25; // Confirmado no Recebíveis Calendário Cielo (
 // Cobrada 1x/ano — descontada diretamente do repasse (não aparece como débito no banco)
 // Afiliação Smartnet nº 4528352 · Depósito via TRANSFERENCIA PIX toda segunda-feira
 // Agência no contrato (1771) foi migrada automaticamente para AG.05639 pelo Bradesco
+// Anuidade Sodexo/Pluxee: R$268.25/ano (confirmado no portal Sodexo)
+// Cobrada descontada do repasse — não aparece como débito no banco
+var SODEXO_ANUIDADE_ANUAL = 268.25;
+
 var VR_ANUIDADE_FAIXAS = [
   { ate: 3600,   valor: 118 },
   { ate: 12000,  valor: 232 },
@@ -722,7 +731,7 @@ function parseOFX(raw) {
     var memo = (getTag(t, 'MEMO') || getTag(t, 'NAME') || '').trim();
     if (!amt || !dt) continue;
     var y = dt.substring(0,4), m = dt.substring(4,6), d = dt.substring(6,8);
-    var valor = parseFloat(amt.replace(',','.'));
+    var valor = parseFloat(amt.replace(/\./g,'').replace(',','.'));
     // Chave de dedup: data + valor exato + memo (evita duplicatas entre OFX sobrepostos)
     var dupKey = dt.substring(0,8) + '|' + amt.trim() + '|' + memo.substring(0,60);
     rows.push({ date: new Date(+y,+m-1,+d), dt: d+'/'+m+'/'+y, valor: valor, memo: memo, _dupKey: dupKey });
@@ -840,6 +849,11 @@ function addDiasCorridos(d, n) {
   while (x.getDay() === 0 || x.getDay() === 6) x.setDate(x.getDate() + 1);
   return x;
 }
+function proximoDomingo(d) {
+  var r = new Date(d); var dow = r.getDay(); // 0=Dom
+  var add = dow === 0 ? 0 : (7 - dow); // dias até próximo domingo
+  r.setDate(r.getDate() + add); return r;
+}
 function proximaSegunda(d) {
   var x = new Date(d), day = x.getDay();
   var add = day === 1 ? 0 : day === 0 ? 1 : 8 - day;
@@ -860,6 +874,7 @@ function calcDeposito(date, produto) {
   if (c.regra === 'uteis')     return addDiasUteis(date, c.prazo);
   if (c.regra === 'corte_seg') { var cut = proximaSegunda(date); var r = new Date(cut); r.setDate(r.getDate() + c.prazo); return r; }
   if (c.regra === 'corte_ter') { var cut = proximaTerca(date);   var r = new Date(cut); r.setDate(r.getDate() + c.prazo); return r; }
+  if (c.regra === 'corte_dom') { var cut = proximoDomingo(date); var r = new Date(cut); r.setDate(r.getDate() + c.prazo); return r; }
   return null;
 }
 
